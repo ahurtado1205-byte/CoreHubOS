@@ -1,0 +1,38 @@
+interface Props {
+  canConfirm: boolean;
+  isConfirmed: boolean;
+  onConfirm: () => void;
+}
+
+export function OperationalConfirmationPanel({ canConfirm, isConfirmed, onConfirm }: Props) {
+  if (isConfirmed) {
+    return (
+      <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-sm">
+        <h4 className="font-bold">Operación confirmada en modo mock.</h4>
+        <p className="text-xs mt-1">La cotización fue movida a Ganadas en el estado local.</p>
+        <p className="text-[10px] mt-2 italic">No se guardó en base real.</p>
+      </div>
+    );
+  }
+
+  if (!canConfirm) {
+    return (
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-sm">
+        <p>Creá primero una reserva mock para habilitar la confirmación operativa.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+      <h4 className="font-bold text-blue-800 text-sm">Confirmación operativa</h4>
+      <p className="text-xs text-blue-700">Esta acción moverá la cotización a Ganadas solo en estado local.</p>
+      <button 
+        onClick={onConfirm}
+        className="w-full bg-blue-600 text-white text-xs font-bold py-2 px-4 rounded hover:bg-blue-700"
+      >
+        Confirmar operación mock
+      </button>
+    </div>
+  );
+}
