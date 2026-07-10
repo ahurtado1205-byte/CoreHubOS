@@ -637,7 +637,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   const deleteRatePlan = (id: string) => setRatePlans(prev => prev.filter(p => p.id !== id));
 
   const addPromotion = (promo: Promotion) => setPromotions(prev => [...prev, { ...promo, property_id: promo.property_id || getActivePropertyId() }]);
-  const updatePromotion = (promo: Promotion) => setPromotions(prev => setPromotions(prev => prev.map(p => p.id === promo.id ? promo : p)));
+  const updatePromotion = (promo: Promotion) => setPromotions(prev => prev.map(p => p.id === promo.id ? promo : p));
   const deletePromotion = (id: string) => setPromotions(prev => prev.filter(p => p.id !== id));
 
   const addSource = (source: string) => setBookingSources(prev => prev.includes(source) ? prev : [...prev, source]);
@@ -734,7 +734,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       bookingSources, leads: filteredLeads, contacts: filteredContacts, opportunities: filteredOpportunities, activities: filteredActivities, tasks: filteredTasks, maintenanceBlocks: filteredMaintenanceBlocks, housekeepingTasks,
       addMaintenanceBlock, updateMaintenanceBlock, deleteMaintenanceBlock, updateHousekeepingTask, addQuote, updateQuote, deleteQuote, addBooking, updateBooking, deleteBooking, updateUnits,
       addUnit, updateUnit, deleteUnit, addUnitType, updateUnitType, deleteUnitType, addTemplate, updateTemplate, deleteTemplate, addRateRule, updateRateRule, deleteRateRule, setDailyRate,
-      addRatePlan, updateRatePlan, deleteRatePlan, addPromotion, updatePromotion, deletePromotion, addSource, deleteSource, addSource, deleteSource, addLead, updateLead, addContact, updateContact, deleteContact,
+      addRatePlan, updateRatePlan, deleteRatePlan, addPromotion, updatePromotion, deletePromotion, addSource, deleteSource, addLead, updateLead, addContact, updateContact, deleteContact,
       addOpportunity, updateOpportunity, addActivity, addTask, updateTask, payments, invoices, addPayment, deletePayment, addInvoice, updateInvoice,
       teamMembers: filteredTeamMembers, roles, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole, currentUserProfile, isAuthenticated, login, logout, isInitialized, initializeSystem, bookingColors, updateBookingColor, deleteBookingColor
     }}>
