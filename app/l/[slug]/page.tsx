@@ -11,7 +11,7 @@ export default function DynamicLandingPage() {
   const router = useRouter();
   const params = useParams();
   const slug = params?.slug as string;
-  const { properties, landings, funnels, addQuote } = usePMS();
+  const { properties, landings, funnels, addQuote, isInitialized } = usePMS();
   const [config, setConfig] = useState<LandingConfig | null>(null);
 
   // Quiz/Funnel States
@@ -24,7 +24,13 @@ export default function DynamicLandingPage() {
   const preset = themePresets[property.theme_preset || 'cozy'] || themePresets.cozy;
 
   useEffect(() => {
-    // 1. Try localStorage first (immediate local reflection)
+    // 1. If database is loaded, use database values as primary source of truth
+    if (isInitialized && landings && landings[slug]) {
+      setConfig(landings[slug]);
+      return;
+    }
+
+    // 2. Try localStorage first as an instantaneous loading state while db initializes
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('hotelFlow_landings');
       if (saved) {
@@ -37,31 +43,33 @@ export default function DynamicLandingPage() {
         } catch (e) {}
       }
     }
-
-    // 2. Try global database landings context
-    if (landings && landings[slug]) {
-      setConfig(landings[slug]);
-      return;
-    }
     
-    // Fallback to default if it matches
-    if (slug === defaultLandingConfig.slug || slug === 'parejas') {
-      setConfig(defaultLandingConfig);
-    } else if (slug) {
-      // Create a dynamic default for new ones
-      setConfig({
-        ...defaultLandingConfig,
-        slug: slug,
-        targetQuizSlug: slug
-      });
+    // 3. Fallback to default if database is initialized but slug is not found
+    if (isInitialized) {
+      if (slug === defaultLandingConfig.slug || slug === 'parejas') {
+        setConfig(defaultLandingConfig);
+      } else if (slug) {
+        // Create a dynamic default for new ones
+        setConfig({
+          ...defaultLandingConfig,
+          slug: slug,
+          targetQuizSlug: slug
+        });
+      }
     }
-  }, [slug, landings]);
+  }, [slug, landings, isInitialized]);
 
   useEffect(() => {
     if (config) {
       const targetSlug = config.targetQuizSlug || slug || 'parejas';
       
-      // 1. Try localStorage first
+      // 1. If database is loaded, use database funnels as primary source of truth
+      if (isInitialized && funnels && funnels[targetSlug]) {
+        setFunnelConfig(funnels[targetSlug]);
+        return;
+      }
+
+      // 2. Try localStorage fallback while loading
       if (typeof window !== 'undefined') {
         const saved = localStorage.getItem('hotelFlow_funnels');
         if (saved) {
@@ -75,14 +83,14 @@ export default function DynamicLandingPage() {
         }
       }
 
-      // 2. Try database funnels
+      // 3. Absolute fallback
       if (funnels && funnels[targetSlug]) {
         setFunnelConfig(funnels[targetSlug]);
       } else {
         setFunnelConfig(defaultFunnelConfig);
       }
     }
-  }, [config, funnels, slug]);
+  }, [config, funnels, slug, isInitialized]);
 
   if (!config) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div></div>;
