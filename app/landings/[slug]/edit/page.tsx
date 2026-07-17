@@ -12,7 +12,7 @@ export default function LandingEditor() {
   const params = useParams();
   const slugParam = (params?.slug as string) || 'nueva';
   
-  const { landings, updateLandings, funnels, updateFunnels } = usePMS();
+  const { landings, updateLandings, funnels, updateFunnels, saveStatus } = usePMS();
   const [config, setConfig] = useState<LandingConfig>(defaultLandingConfig);
   const [funnelConfig, setFunnelConfig] = useState<FunnelConfig>(defaultFunnelConfig);
   const [isSaved, setIsSaved] = useState(false);
@@ -141,14 +141,31 @@ export default function LandingEditor() {
             Ver Landing
             <ArrowRight className="w-4 h-4" />
           </Link>
+          {saveStatus === 'saving' && (
+            <span className="text-xs text-amber-600 font-bold animate-pulse">
+              ☁️ Guardando en la nube...
+            </span>
+          )}
+          {saveStatus === 'error' && (
+            <span className="text-xs text-red-600 font-bold">
+              ❌ Error al guardar (revisa la consola)
+            </span>
+          )}
+          {saveStatus === 'saved' && (
+            <span className="text-xs text-emerald-600 font-bold">
+              ✅ Sincronizado con la nube
+            </span>
+          )}
           <button 
             onClick={handleSave}
             className={`px-5 py-2 text-sm font-bold rounded-xl flex items-center gap-2 transition-all shadow-sm ${
+              saveStatus === 'saving' ? 'bg-amber-500 text-white' :
+              saveStatus === 'error' ? 'bg-red-600 text-white' :
               isSaved ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'
             }`}
           >
             <Save className="w-4 h-4" />
-            {isSaved ? '¡Guardado!' : 'Guardar Cambios'}
+            {saveStatus === 'saving' ? 'Guardando...' : isSaved ? '¡Guardado!' : 'Guardar Cambios'}
           </button>
         </div>
       </header>
