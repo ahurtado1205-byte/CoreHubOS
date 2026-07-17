@@ -337,7 +337,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
           headers['Authorization'] = `Bearer ${token}`;
         }
         
-        let url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}` : '/api/db';
+        let url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}&t=${Date.now()}` : `/api/db?t=${Date.now()}`;
         if (typeof window !== 'undefined') {
           const path = window.location.pathname;
           if (path.includes('/precheckin/')) {
