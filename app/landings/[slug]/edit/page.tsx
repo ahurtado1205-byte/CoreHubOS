@@ -18,11 +18,18 @@ export default function LandingEditor() {
   const [isSaved, setIsSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<'hero' | 'comparison' | 'features' | 'quote' | 'preQuiz' | 'quiz'>('hero');
   const [slug, setSlug] = useState(slugParam === 'nueva' ? 'mi-landing' : slugParam);
+  const hasLoadedRef = React.useRef(false);
 
   useEffect(() => {
+    // CRITICAL: Only load from context/localStorage ONCE on initial mount.
+    // The PMSContext polls every 3 seconds and overwrites `landings` state,
+    // which would reset the user's unsaved edits if we re-ran this effect.
+    if (hasLoadedRef.current) return;
+    
     if (slugParam !== 'nueva') {
       if (landings && landings[slugParam]) {
         setConfig(landings[slugParam]);
+        hasLoadedRef.current = true;
       } else {
         const saved = localStorage.getItem('hotelFlow_landings');
         if (saved) {
@@ -30,6 +37,7 @@ export default function LandingEditor() {
             const parsed = JSON.parse(saved);
             if (parsed[slugParam]) {
               setConfig(parsed[slugParam]);
+              hasLoadedRef.current = true;
             }
           } catch (e) {}
         }
