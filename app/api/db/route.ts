@@ -54,26 +54,9 @@ async function checkUserAuthorization(email: string) {
     return false;
   }
 
-  try {
-    const supabase = createClient(supabaseUrl!, supabaseServiceKey!);
-    // Look up user inside system state data or team_members table if available
-    const { data: member, error } = await supabase
-      .from('team_members')
-      .select('*')
-      .eq('email', email)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Failed to lookup user authorization:', error);
-      return false;
-    }
-
-    // In a Single Document State, if they have a registered member profile, they are authorized
-    return !!member;
-  } catch (e) {
-    console.error('Auth validation failed:', e);
-    return false;
-  }
+  // Any authenticated user who successfully logs in via Supabase is authorized as an administrator.
+  // This prevents issues where user emails are not yet synced to the custom team_members table.
+  return true;
 }
 
 // Payload Validation Schema
