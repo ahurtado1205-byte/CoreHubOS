@@ -6,6 +6,33 @@ import { usePMS } from '../../../context/PMSContext';
 import { CalendarRange, Phone, Mail, MapPin, CheckCircle, ArrowRight } from 'lucide-react';
 import { themePresets } from '../../../lib/themeConfig';
 
+const reviews = [
+  {
+    id: 1,
+    name: "Valeria Gómez",
+    rating: 5,
+    comment: "¡Excelente atención y las instalaciones son impecables! Ideal para relajarse y desconectar de la ciudad.",
+    date: "Hace 2 semanas",
+    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=150&auto=format&fit=crop"
+  },
+  {
+    id: 2,
+    name: "Juan Manuel Ortiz",
+    rating: 5,
+    comment: "El entorno es único y la habitación súper confortable. El personal estuvo atento en todo momento. ¡Volveremos!",
+    date: "Hace 1 mes",
+    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150&auto=format&fit=crop"
+  },
+  {
+    id: 3,
+    name: "Sofía Rodríguez",
+    rating: 5,
+    comment: "La mejor experiencia de hospedaje. Las amenidades y la vista son increíbles. Súper recomendable el desayuno.",
+    date: "Hace 3 días",
+    avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=150&auto=format&fit=crop"
+  }
+];
+
 export default function PublicHotelWebsite() {
   const params = useParams();
   const router = useRouter();
@@ -13,6 +40,7 @@ export default function PublicHotelWebsite() {
   const propertyId = params.propertyId as string;
 
   const [landings, setLandings] = React.useState<Record<string, any>>({});
+  const [activeReviewIdx, setActiveReviewIdx] = React.useState(0);
   
   React.useEffect(() => {
     const loadLandings = () => {
@@ -32,6 +60,13 @@ export default function PublicHotelWebsite() {
       window.addEventListener('storage', loadLandings);
       return () => window.removeEventListener('storage', loadLandings);
     }
+  }, []);
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveReviewIdx((prev) => (prev + 1) % reviews.length);
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   if (!isInitialized) {
@@ -197,6 +232,55 @@ export default function PublicHotelWebsite() {
         </div>
       </section>
 
+      {/* Reviews Carousel Section */}
+      <section className="py-20 px-6 max-w-4xl mx-auto text-center overflow-hidden">
+        <h2 className={`text-3xl font-black tracking-tight mb-4 ${preset.fontTitle}`} style={{ color: themeColor }}>Lo que dicen nuestros huéspedes</h2>
+        <p className="text-slate-500 max-w-lg mx-auto font-semibold mb-12">Experiencias reales de quienes ya nos visitaron.</p>
+
+        <div className={`relative bg-white border border-slate-100 p-8 md:p-12 shadow-md max-w-2xl mx-auto min-h-[220px] flex flex-col justify-between transition-all duration-500 ${preset.cardStyle}`}>
+          <div className="flex justify-center gap-1 text-amber-400 mb-4">
+            {Array.from({ length: reviews[activeReviewIdx].rating }).map((_, i) => (
+              <svg key={i} className="w-5 h-5 fill-current" viewBox="0 0 20 20">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+              </svg>
+            ))}
+          </div>
+
+          <p className="text-slate-600 text-base md:text-lg italic leading-relaxed font-semibold mb-6">
+            "{reviews[activeReviewIdx].comment}"
+          </p>
+
+          <div className="flex items-center justify-center gap-3">
+            <img 
+              src={reviews[activeReviewIdx].avatar} 
+              alt={reviews[activeReviewIdx].name} 
+              className="w-10 h-10 rounded-full object-cover border border-slate-100"
+            />
+            <div className="text-left font-bold">
+              <h4 className="text-slate-800 text-sm">{reviews[activeReviewIdx].name}</h4>
+              <span className="text-[10px] text-slate-400 font-bold block">{reviews[activeReviewIdx].date}</span>
+            </div>
+          </div>
+
+          {/* Dots Indicator */}
+          <div className="flex justify-center gap-1.5 mt-8">
+            {reviews.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => setActiveReviewIdx(idx)}
+                className={`w-2.5 h-2.5 rounded-full transition-all ${
+                  idx === activeReviewIdx 
+                    ? 'w-6' 
+                    : 'bg-slate-200 hover:bg-slate-350'
+                }`}
+                style={{ backgroundColor: idx === activeReviewIdx ? themeColor : undefined }}
+                title={`Ir a reseña ${idx + 1}`}
+              ></button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Promociones & Ofertas Especiales (Campaign Landings Linkage) */}
       {(() => {
         const activePropertyLandings = Object.entries(landings).filter(([_, config]) => {
@@ -235,7 +319,7 @@ export default function PublicHotelWebsite() {
                     {config.hero?.footerText || "Toma menos de 60 segundos."}
                   </div>
                   <button
-                    onClick={() => router.push(`/funnels/${slug}`)}
+                    onClick={() => router.push(`/l/${slug}`)}
                     className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-5 py-2.5 text-xs font-black rounded-full shadow-md hover:scale-105 active:scale-95 transition-all inline-flex items-center gap-2"
                   >
                     {config.hero?.ctaText || "Obtener Descuento ⚡"}

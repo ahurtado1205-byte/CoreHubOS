@@ -7,9 +7,10 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   theme?: 'light' | 'dark';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
 }
 
-export function Modal({ isOpen, onClose, title, children, theme = 'light' }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, theme = 'light', size = 'lg' }: ModalProps) {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -29,6 +30,16 @@ export function Modal({ isOpen, onClose, title, children, theme = 'light' }: Mod
   if (!isOpen) return null;
 
   const isDark = theme === 'dark';
+  const sizeClass = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-xl',
+    '2xl': 'max-w-2xl',
+    '3xl': 'max-w-3xl',
+    '4xl': 'max-w-4xl',
+    '5xl': 'max-w-5xl',
+  }[size];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -39,7 +50,7 @@ export function Modal({ isOpen, onClose, title, children, theme = 'light' }: Mod
       />
       
       {/* Modal Panel */}
-      <div className={`relative flex flex-col max-h-[90vh] rounded-2xl shadow-xl w-full max-w-lg animate-in fade-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 text-white border border-slate-800' : 'bg-white text-slate-800'}`}>
+      <div className={`relative flex flex-col max-h-[90vh] rounded-2xl shadow-xl w-full ${sizeClass} animate-in fade-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 text-white border border-slate-800' : 'bg-white text-slate-800'}`}>
         <div className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
           <h3 className="font-bold text-lg">{title}</h3>
           <button 

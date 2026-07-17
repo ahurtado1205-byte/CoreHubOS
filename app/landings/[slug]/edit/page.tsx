@@ -1,47 +1,103 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { defaultLandingConfig, LandingConfig } from '../../../../lib/funnelConfig';
-import { Save, ArrowLeft, LayoutTemplate, SplitSquareHorizontal, FileText, Quote as QuoteIcon, ArrowRight } from 'lucide-react';
+import { defaultLandingConfig, LandingConfig, FunnelConfig, defaultFunnelConfig } from '../../../../lib/funnelConfig';
+import { Save, ArrowLeft, LayoutTemplate, SplitSquareHorizontal, FileText, Quote as QuoteIcon, ArrowRight, FileSignature } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { usePMS } from '../../../../context/PMSContext';
 
 export default function LandingEditor() {
   const router = useRouter();
   const params = useParams();
   const slugParam = (params?.slug as string) || 'nueva';
   
+  const { landings, updateLandings, funnels, updateFunnels } = usePMS();
   const [config, setConfig] = useState<LandingConfig>(defaultLandingConfig);
+  const [funnelConfig, setFunnelConfig] = useState<FunnelConfig>(defaultFunnelConfig);
   const [isSaved, setIsSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'hero' | 'comparison' | 'features' | 'quote' | 'preQuiz'>('hero');
+  const [activeTab, setActiveTab] = useState<'hero' | 'comparison' | 'features' | 'quote' | 'preQuiz' | 'quiz'>('hero');
   const [slug, setSlug] = useState(slugParam === 'nueva' ? 'mi-landing' : slugParam);
 
   useEffect(() => {
     if (slugParam !== 'nueva') {
-      const saved = localStorage.getItem('hotelFlow_landings');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed[slugParam]) {
-            setConfig(parsed[slugParam]);
-          }
-        } catch (e) {}
+      if (landings && landings[slugParam]) {
+        setConfig(landings[slugParam]);
+      } else {
+        const saved = localStorage.getItem('hotelFlow_landings');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed[slugParam]) {
+              setConfig(parsed[slugParam]);
+            }
+          } catch (e) {}
+        }
+      }
+      
+      // Load corresponding funnel configuration
+      if (funnels && funnels[slugParam]) {
+        setFunnelConfig(funnels[slugParam]);
+      } else if (landings && landings[slugParam]?.targetQuizSlug && funnels && funnels[landings[slugParam].targetQuizSlug]) {
+        setFunnelConfig(funnels[landings[slugParam].targetQuizSlug]);
       }
     }
-  }, [slugParam]);
+  }, [slugParam, landings, funnels]);
 
   const handleSave = () => {
+    const targetSlug = slug || slugParam;
+    const nextLandingConfig = { 
+      ...config, 
+      slug: targetSlug,
+      targetQuizSlug: targetSlug
+    };
+
     const saved = localStorage.getItem('hotelFlow_landings');
-    let parsed = { [slug]: { ...config, slug } };
+    let parsed = { [targetSlug]: nextLandingConfig };
     if (saved) {
-      try { parsed = { ...JSON.parse(saved), [slug]: { ...config, slug } }; } catch (e) {}
+      try { parsed = { ...JSON.parse(saved), [targetSlug]: nextLandingConfig }; } catch (e) {}
     }
     localStorage.setItem('hotelFlow_landings', JSON.stringify(parsed));
+    
+    // Save Landing to context
+    updateLandings({
+      ...landings,
+      [targetSlug]: nextLandingConfig
+    });
+
+    // Save Funnel Config to context (aligning with same slug)
+    const nextFunnelConfig = {
+      ...funnelConfig,
+      title: targetSlug.toUpperCase(),
+      subtitle: `Quiz ${targetSlug}`,
+      welcomeHeading: funnelConfig.welcomeHeading || `¡Disfrutá de tu escapada ideal!`,
+      welcomeDescription: funnelConfig.welcomeDescription || `Respondé unas preguntas y obtené tu tarifa promocional.`,
+      reflectionHeading: funnelConfig.reflectionHeading || "¡Respuestas recibidas! 🎁",
+      reflectionText: funnelConfig.reflectionText || `Ya estamos preparando la mejor propuesta para vos.`,
+      reflectionBenefit: funnelConfig.reflectionBenefit || `Código aplicado automáticamente en tu reserva directa.`,
+      steps: funnelConfig.steps || defaultFunnelConfig.steps,
+      hooks: funnelConfig.hooks || defaultFunnelConfig.hooks,
+      images: funnelConfig.images || defaultFunnelConfig.images
+    };
+
+    updateFunnels({
+      ...funnels,
+      [targetSlug]: nextFunnelConfig
+    });
+
+    // Save Funnel Config to localStorage for immediate reflection
+    const savedFunnels = localStorage.getItem('hotelFlow_funnels');
+    let parsedFunnels = { [targetSlug]: nextFunnelConfig };
+    if (savedFunnels) {
+      try { parsedFunnels = { ...JSON.parse(savedFunnels), [targetSlug]: nextFunnelConfig }; } catch (e) {}
+    }
+    localStorage.setItem('hotelFlow_funnels', JSON.stringify(parsedFunnels));
+
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
     
     if (slugParam === 'nueva') {
-      router.push(`/landings/${slug}/edit`);
+      router.push(`/landings/${targetSlug}/edit`);
     }
   };
 
@@ -107,6 +163,7 @@ export default function LandingEditor() {
               { id: 'features', icon: FileText, label: 'Mapa del Tesoro' },
               { id: 'quote', icon: QuoteIcon, label: 'Frase Final' },
               { id: 'preQuiz', icon: LayoutTemplate, label: 'Llamado a la Acción' },
+              { id: 'quiz', icon: FileSignature, label: 'Configuración Quiz' },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -369,6 +426,173 @@ export default function LandingEditor() {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'quiz' && (
+              <div className="space-y-6 animate-fade-in text-xs font-semibold">
+                <h2 className="text-lg font-black text-slate-800 mb-6 border-b border-slate-100 pb-4">Configuración del Quiz Integrado</h2>
+                
+                <div className="space-y-4">
+                  <h3 className="text-sm font-black text-indigo-900">1. Pantalla de Bienvenida del Quiz</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Título de Bienvenida</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.welcomeHeading || ''} 
+                        onChange={e => setFunnelConfig(prev => ({ ...prev, welcomeHeading: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Descripción de Bienvenida</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.welcomeDescription || ''} 
+                        onChange={e => setFunnelConfig(prev => ({ ...prev, welcomeDescription: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-6 border-t border-slate-200">
+                  <h3 className="text-sm font-black text-indigo-900">2. Pregunta de Filtro/Preferencia</h3>
+                  <p className="text-xs text-slate-400 font-medium">Es la primera pregunta del Quiz (ej: "¿Con quién viajas?" o "¿Qué buscas en tu viaje?").</p>
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">La Pregunta</label>
+                    <input 
+                      type="text" 
+                      value={funnelConfig.steps?.[0]?.question || ''} 
+                      onChange={e => {
+                        const steps = [...(funnelConfig.steps || [])];
+                        if (steps[0]) {
+                          steps[0] = { ...steps[0], question: e.target.value };
+                        }
+                        setFunnelConfig(prev => ({ ...prev, steps }));
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="block text-xs font-bold text-slate-500">Opciones de Respuesta (Configurá hasta 3)</label>
+                    {(funnelConfig.steps?.[0]?.options || [
+                      { label: "Pareja o Aniversario 💑", value: "parejas", description: "" },
+                      { label: "Familia o Vacaciones 👨‍👩‍👧‍👦", value: "familia", description: "" },
+                      { label: "Amigos o Aventura 🏔️", value: "amigos", description: "" }
+                    ]).map((opt, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-slate-50 p-3 rounded-xl border border-slate-105">
+                        <span className="text-xs font-bold text-slate-400 w-6">#{idx + 1}</span>
+                        <div className="flex-1 grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-slate-450 block mb-0.5">Etiqueta visible</label>
+                            <input 
+                              type="text" 
+                              placeholder="Ej: Pareja 💑" 
+                              value={opt.label || ''} 
+                              onChange={e => {
+                                const steps = [...(funnelConfig.steps || defaultFunnelConfig.steps)];
+                                if (!steps[0].options) steps[0].options = [];
+                                if (!steps[0].options[idx]) steps[0].options[idx] = { label: '', value: '' };
+                                steps[0].options[idx] = { ...steps[0].options[idx], label: e.target.value };
+                                setFunnelConfig(prev => ({ ...prev, steps }));
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-450 block mb-0.5">Valor (slug)</label>
+                            <input 
+                              type="text" 
+                              placeholder="Ej: parejas" 
+                              value={opt.value || ''} 
+                              onChange={e => {
+                                const steps = [...(funnelConfig.steps || defaultFunnelConfig.steps)];
+                                if (!steps[0].options) steps[0].options = [];
+                                if (!steps[0].options[idx]) steps[0].options[idx] = { label: '', value: '' };
+                                steps[0].options[idx] = { ...steps[0].options[idx], value: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') };
+                                setFunnelConfig(prev => ({ ...prev, steps }));
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-6 border-t border-slate-200">
+                  <h3 className="text-sm font-black text-indigo-900">3. Regalo / Incentivo (PDF o Guía)</h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Regalo (ej: Guía de Lugares Secretos 🍷)</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.hooks?.[0]?.title || ''} 
+                        onChange={e => {
+                          const hooks = [...(funnelConfig.hooks || defaultFunnelConfig.hooks || [])];
+                          if (!hooks[0]) hooks[0] = { id: 'incentivo', type: 'doc', title: '', description: '', url: '', icon: '🎁' };
+                          hooks[0] = { ...hooks[0], title: e.target.value };
+                          setFunnelConfig(prev => ({ ...prev, hooks }));
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Enlace / URL de Descarga</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.hooks?.[0]?.url || ''} 
+                        onChange={e => {
+                          const hooks = [...(funnelConfig.hooks || defaultFunnelConfig.hooks || [])];
+                          if (!hooks[0]) hooks[0] = { id: 'incentivo', type: 'doc', title: '', description: '', url: '', icon: '🎁' };
+                          hooks[0] = { ...hooks[0], url: e.target.value };
+                          setFunnelConfig(prev => ({ ...prev, hooks }));
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-6 border-t border-slate-200">
+                  <h3 className="text-sm font-black text-indigo-900">4. Pantalla Final (Éxito)</h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Título de Éxito</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.reflectionHeading || ''} 
+                        onChange={e => setFunnelConfig(prev => ({ ...prev, reflectionHeading: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Texto Descriptivo Final</label>
+                      <input 
+                        type="text" 
+                        value={funnelConfig.reflectionText || ''} 
+                        onChange={e => setFunnelConfig(prev => ({ ...prev, reflectionText: e.target.value }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Aclaración del Beneficio (ej: Código de descuento aplicado)</label>
+                    <input 
+                      type="text" 
+                      value={funnelConfig.reflectionBenefit || ''} 
+                      onChange={e => setFunnelConfig(prev => ({ ...prev, reflectionBenefit: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 outline-none" 
+                    />
+                  </div>
                 </div>
               </div>
             )}

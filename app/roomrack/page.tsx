@@ -144,6 +144,7 @@ export default function RoomrackPage() {
         isOpen={isBookingModalOpen} 
         onClose={() => setIsBookingModalOpen(false)}
         title={editingBooking ? "Editar Reserva" : "Crear Nueva Reserva"}
+        size="4xl"
       >
         <BookingForm 
           initialBooking={editingBooking}

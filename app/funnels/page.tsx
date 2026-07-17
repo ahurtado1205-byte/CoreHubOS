@@ -364,12 +364,14 @@ export default function FunnelsManager() {
 
   const isSystemEmpty = quotes.length === 0 && bookings.length === 0;
 
+  const isDemo = currentPropertyId === '11111111-1111-1111-1111-111111111111';
+
   const stats = {
-    traffic: isSystemEmpty ? 0 : 340 + quizLeads.length * 4, // Zero if wiped, otherwise rich demo
-    quizCompleted: isSystemEmpty ? 0 : 85 + quizLeads.length,
-    leads: isSystemEmpty ? 0 : quizLeads.length + 15,
-    sentQuotes: isSystemEmpty ? 0 : quizLeads.filter(q => q.status === 'follow_up' || q.status === 'sent').length + 8,
-    bookings: isSystemEmpty ? 0 : motorBookings.length + 3
+    traffic: isDemo ? 340 + quizLeads.length * 4 : Math.max(quizLeads.length * 5, filteredQuotes.length * 3),
+    quizCompleted: isDemo ? 85 + quizLeads.length : quizLeads.length,
+    leads: isDemo ? quizLeads.length + 15 : filteredQuotes.length,
+    sentQuotes: isDemo ? quizLeads.filter(q => q.status === 'follow_up' || q.status === 'sent').length + 8 : filteredQuotes.filter(q => q.status === 'follow_up' || q.status === 'sent').length,
+    bookings: isDemo ? motorBookings.length + 3 : filteredBookings.length
   };
 
   const timelineSteps = [

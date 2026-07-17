@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { usePMS } from '../../context/PMSContext';
 import { Hexagon, Search, CalendarRange, Users, BookOpen, CircleDollarSign, BarChart3, LayoutDashboard, Target, Settings, Bell, Filter, Plus, ChevronLeft, ChevronRight, Edit2, MessageCircle, Mail, Download } from 'lucide-react';
 import Link from 'next/link';
@@ -13,6 +13,41 @@ import { Booking } from '../../types';
 import { TopBar } from '../../components/layout/TopBar';
 import { buildWhatsAppLink, buildMailtoLink } from '../../services/communicationTemplateService';
 
+function UpgradeDowngradeBadge({ booking, units, unitTypes }: { booking: any; units: any[]; unitTypes: any[] }) {
+  if (!booking.room_id) return null;
+  
+  const room = units.find(u => u.id === booking.room_id);
+  if (!room) return null;
+
+  const reservedCategory = unitTypes.find(ut => ut.id === booking.unit_type_id);
+  const assignedCategory = unitTypes.find(ut => ut.id === room.unit_type_id);
+
+  if (!reservedCategory || !assignedCategory) return null;
+
+  if (assignedCategory.base_price < reservedCategory.base_price) {
+    return (
+      <span className="inline-flex items-center gap-0.5 bg-rose-50 text-rose-700 border border-rose-200 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ml-1.5 shrink-0 animate-in fade-in" title="Downgrade: Habitación de menor categoría asignada">
+        ⚠️ Down
+      </span>
+    );
+  }
+
+  if (assignedCategory.base_price > reservedCategory.base_price) {
+    const isUpsell = booking.upgrade_type === 'upsell';
+    return (
+      <span className={`inline-flex items-center gap-0.5 border text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ml-1.5 shrink-0 animate-in fade-in ${
+        isUpsell 
+          ? 'bg-amber-50 text-amber-700 border-amber-200' 
+          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      }`} title={isUpsell ? "Upgrade con cobro adicional (Upsell)" : "Upgrade de cortesía"}>
+        {isUpsell ? '💎 Upsell' : '✨ Up'}
+      </span>
+    );
+  }
+
+  return null;
+}
+
 export default function BookingsPage() {
   const { bookings, properties, currentPropertyId, units, unitTypes, addBooking, updateBooking, deleteBooking, bookingColors, searchQuery, setSearchQuery, templates } = usePMS();
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -21,6 +56,22 @@ export default function BookingsPage() {
   const [isSendMessageModalOpen, setIsSendMessageModalOpen] = useState(false);
   const [sendMessageTarget, setSendMessageTarget] = useState<Booking | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [sortField, setSortField] = useState<'guest' | 'check_in' | 'status'>('check_in');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const handleSort = (field: 'guest' | 'check_in' | 'status') => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const sortArrow = (field: 'guest' | 'check_in' | 'status') => {
+    if (sortField !== field) return <span className="text-slate-300 ml-1">↕</span>;
+    return <span className="text-indigo-500 ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  };
 
   const handleEditBooking = (booking: Booking) => {
     setEditingBooking(booking);
@@ -32,13 +83,31 @@ export default function BookingsPage() {
     setIsBookingModalOpen(true);
   };
 
-  // Filter bookings
-  const filteredBookings = bookings.filter(b => {
-    const q = (searchQuery || '').toLowerCase();
-    const matchesSearch = !q || `${b.first_name} ${b.last_name} ${b.email || ''} ${b.confirmation_id || ''} ${b.id}`.toLowerCase().includes(q);
-    const matchesStatus = statusFilter === 'all' || b.booking_status === statusFilter;
-    return matchesSearch && matchesStatus;
-  }).sort((a, b) => new Date(a.check_in).getTime() - new Date(b.check_in).getTime());
+  // Filter + Sort bookings
+  const filteredBookings = useMemo(() => {
+    const filtered = bookings.filter(b => {
+      const q = (searchQuery || '').toLowerCase();
+      const matchesSearch = !q || `${b.first_name} ${b.last_name} ${b.email || ''} ${b.confirmation_id || ''} ${b.id}`.toLowerCase().includes(q);
+      const matchesStatus = statusFilter === 'all' || b.booking_status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+
+    return filtered.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'guest') {
+        const nameA = `${a.last_name} ${a.first_name}`.toLowerCase();
+        const nameB = `${b.last_name} ${b.first_name}`.toLowerCase();
+        cmp = nameA.localeCompare(nameB);
+      } else if (sortField === 'check_in') {
+        cmp = new Date(a.check_in).getTime() - new Date(b.check_in).getTime();
+      } else if (sortField === 'status') {
+        const sA = (bookingColors[a.booking_status]?.label || a.booking_status).toLowerCase();
+        const sB = (bookingColors[b.booking_status]?.label || b.booking_status).toLowerCase();
+        cmp = sA.localeCompare(sB);
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [bookings, searchQuery, statusFilter, sortField, sortDir, bookingColors]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-100 overflow-hidden">
@@ -91,10 +160,16 @@ export default function BookingsPage() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-bold tracking-wider">
-                    <th className="p-4">Huésped</th>
-                    <th className="p-4">Check-in / Out</th>
+                    <th className="p-4 cursor-pointer hover:text-indigo-600 select-none" onClick={() => handleSort('guest')}>
+                      Huésped {sortArrow('guest')}
+                    </th>
+                    <th className="p-4 cursor-pointer hover:text-indigo-600 select-none" onClick={() => handleSort('check_in')}>
+                      Check-in / Out {sortArrow('check_in')}
+                    </th>
                     <th className="p-4">Habitación</th>
-                    <th className="p-4">Estado</th>
+                    <th className="p-4 cursor-pointer hover:text-indigo-600 select-none" onClick={() => handleSort('status')}>
+                      Estado {sortArrow('status')}
+                    </th>
                     <th className="p-4">Total</th>
                     <th className="p-4 text-right">Acciones</th>
                   </tr>
@@ -112,7 +187,10 @@ export default function BookingsPage() {
                             <div className="flex items-center gap-2 mb-0.5">
                               <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 uppercase">{booking.confirmation_id || booking.id}</span>
                             </div>
-                            <div className="font-bold text-slate-800">{booking.first_name} {booking.last_name}</div>
+                            <div className="font-bold text-slate-800 flex items-center flex-wrap gap-1">
+                              {booking.first_name} {booking.last_name}
+                              <UpgradeDowngradeBadge booking={booking} units={units} unitTypes={unitTypes} />
+                            </div>
                             {booking.email && <div className="text-xs text-slate-500 mt-0.5">{booking.email}</div>}
                           </td>
                           <td className="p-4">
@@ -182,7 +260,10 @@ export default function BookingsPage() {
                     <div className="flex justify-between items-start">
                       <div>
                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 uppercase">{booking.confirmation_id || booking.id.substring(0,8)}</span>
-                        <h4 className="font-bold text-slate-800 text-sm mt-1">{booking.first_name} {booking.last_name}</h4>
+                        <h4 className="font-bold text-slate-800 text-sm mt-1 flex items-center flex-wrap gap-1">
+                          {booking.first_name} {booking.last_name}
+                          <UpgradeDowngradeBadge booking={booking} units={units} unitTypes={unitTypes} />
+                        </h4>
                         {booking.email && <p className="text-xs text-slate-500">{booking.email}</p>}
                       </div>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusConfig?.colorClass || 'bg-slate-100 text-slate-600'}`}>
@@ -238,6 +319,7 @@ export default function BookingsPage() {
         isOpen={isBookingModalOpen} 
         onClose={() => setIsBookingModalOpen(false)}
         title={editingBooking ? "Editar Reserva" : "Crear Nueva Reserva"}
+        size="4xl"
       >
         <BookingForm 
           initialBooking={editingBooking}
@@ -252,19 +334,18 @@ export default function BookingsPage() {
           isOpen={isSendMessageModalOpen} 
           onClose={() => setIsSendMessageModalOpen(false)}
           title="Enviar Mensaje / Generar PDF"
-          theme="dark"
         >
           <div className="p-2 space-y-6">
-            <p className="text-zinc-300 text-sm">
+            <p className="text-slate-600 text-sm">
               Comunicación con <strong>{sendMessageTarget.first_name} {sendMessageTarget.last_name}</strong>. Seleccioná una plantilla.
             </p>
 
             <div className="mb-4">
-              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">Plantilla a utilizar</label>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Plantilla a utilizar</label>
               <select 
                 value={selectedTemplateId || (templates[0]?.id || '')} 
                 onChange={e => setSelectedTemplateId(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-sm text-zinc-200 focus:outline-none focus:border-amber-400"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 font-medium"
               >
                 {templates.length > 0 ? (
                   <optgroup label="Tus Plantillas">

@@ -18,6 +18,7 @@ export interface Property {
   booking_engine_hero?: string;
   terms_conditions?: string;
   cancellation_policy?: string;
+  pre_checkin_fields?: any;
   website_hero_title?: string;
   website_hero_subtitle?: string;
   website_hero_image?: string;
@@ -233,10 +234,15 @@ export interface Booking {
   notes?: string;
   follow_up_date?: string;
   pax?: number;
+  adults?: number;
+  children?: number;
   extra_beds?: number;
   document_id?: string;
+  upgrade_type?: 'free_upgrade' | 'upsell' | 'downgrade' | '';
   dob?: string;
   pre_checkin_completed?: boolean;
+  pre_checkin_status?: 'none' | 'pending_review' | 'approved';
+  pre_checkin_pending_data?: any;
   companions?: Companion[];
   cancellation_reason?: string;
 }
@@ -307,3 +313,49 @@ export interface Promotion {
   is_active: boolean;
   created_at: string;
 }
+
+// Customer Data Platform (CDP) Interfaces
+export interface CdpGoldenRecord {
+  id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone?: string;
+  nationality?: string;
+  document_id?: string;
+  dob?: string;
+  preferences: Record<string, any>;
+  metadata: Record<string, any>;
+  merged_into_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CdpGuestProfile {
+  id: string;
+  golden_record_id?: string;
+  source_system: string;
+  source_id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone?: string;
+  nationality?: string;
+  document_id?: string;
+  dob?: string;
+  raw_payload: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CdpProfileMatchLog {
+  id: string;
+  guest_profile_id: string;
+  golden_record_id: string;
+  match_type: 'email_exact' | 'phone_exact' | 'document_exact' | 'fuzzy_name' | 'manual_match';
+  confidence_score: number;
+  rules_evaluated: any[];
+  status: 'auto_merged' | 'pending_review' | 'rejected' | 'manually_matched';
+  created_at: string;
+}
+

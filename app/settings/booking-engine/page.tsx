@@ -10,13 +10,25 @@ import { ImageUpload } from '@/components/ui/ImageUpload';
 export default function BookingEngineSettingsPage() {
   const { properties, currentPropertyId, updateProperty } = usePMS();
   
-  const currentProperty = properties.find(p => p.id === currentPropertyId);
+  const currentProperty = properties.find(p => p.id === currentPropertyId) || properties[0];
+
+  const DEFAULT_FIELDS = {
+    document_id: { enabled: true, required: true, label: 'Documento / Pasaporte' },
+    dob: { enabled: true, required: true, label: 'Fecha de Nacimiento' },
+    email: { enabled: true, required: true, label: 'Email' },
+    nationality: { enabled: true, required: true, label: 'Nacionalidad' },
+    phone: { enabled: true, required: false, label: 'Teléfono' },
+    companions: { enabled: true, required: false, label: 'Acompañantes' }
+  };
 
   const [color, setColor] = useState(currentProperty?.booking_engine_color || '#312e81');
   const [logo, setLogo] = useState(currentProperty?.booking_engine_logo || '');
   const [hero, setHero] = useState(currentProperty?.booking_engine_hero || '');
   const [terms, setTerms] = useState(currentProperty?.terms_conditions || '');
   const [policy, setPolicy] = useState(currentProperty?.cancellation_policy || '');
+  const [preCheckinFields, setPreCheckinFields] = useState(
+    currentProperty?.pre_checkin_fields || DEFAULT_FIELDS
+  );
 
   if (!currentProperty) {
     return <div className="p-8">No hay propiedad seleccionada</div>;
@@ -30,6 +42,7 @@ export default function BookingEngineSettingsPage() {
       booking_engine_hero: hero,
       terms_conditions: terms,
       cancellation_policy: policy,
+      pre_checkin_fields: preCheckinFields,
     });
     alert('¡Configuración guardada exitosamente!');
   };
@@ -137,6 +150,60 @@ export default function BookingEngineSettingsPage() {
                       placeholder="Términos legales que el huésped debe aceptar al reservar..."
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Configuración de Ficha de Registro */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-indigo-500" />
+                  Campos de Ficha de Registro (Pre-Checkin)
+                </h2>
+                <p className="text-xs text-slate-500 mb-4 font-medium">
+                  Configura cuáles campos serán solicitados obligatoriamente al pasajero durante su registro digital.
+                </p>
+                
+                <div className="divide-y divide-slate-105 space-y-1">
+                  {Object.entries(preCheckinFields).map(([key, config]: [string, any]) => (
+                    <div key={key} className="py-3 flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-700">{config.label}</span>
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input 
+                            type="checkbox"
+                            checked={config.enabled}
+                            onChange={(e) => setPreCheckinFields((prev: any) => {
+                              const updated = {
+                                ...prev,
+                                [key]: { ...prev[key], enabled: e.target.checked }
+                              };
+                              // If disabled, also turn off required
+                              if (!e.target.checked) {
+                                updated[key].required = false;
+                              }
+                              return updated;
+                            })}
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                          />
+                          <span className="text-xs text-slate-500 font-bold">Solicitar</span>
+                        </label>
+
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input 
+                            type="checkbox"
+                            checked={config.required}
+                            disabled={!config.enabled}
+                            onChange={(e) => setPreCheckinFields((prev: any) => ({
+                              ...prev,
+                              [key]: { ...prev[key], required: e.target.checked }
+                            }))}
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 disabled:opacity-50"
+                          />
+                          <span className="text-xs text-slate-500 font-bold">Obligatorio</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 

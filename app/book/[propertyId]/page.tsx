@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { usePMS } from '../../../context/PMSContext';
 import { usePricing } from '../../../hooks/usePricing';
-import { Calendar, Users, Tag, Search, User, Mail, Phone, ChevronRight, Check, FileText } from 'lucide-react';
+import { Calendar, Users, Tag, Search, User, Mail, Phone, ChevronRight, Check, FileText, Home } from 'lucide-react';
 import { format, addDays, parseISO, differenceInDays } from 'date-fns';
 import { UnitType, RatePlan } from '../../../types/inventory';
 import { themePresets } from '../../../lib/themeConfig';
@@ -13,11 +14,49 @@ export default function BookingEnginePage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const propertyId = params.propertyId as string;
-  const { properties, unitTypes, ratePlans, addBooking, addQuote, isInitialized, promotions, quotes, units, bookings } = usePMS();
+  const { properties, allUnitTypes, allRatePlans, addBooking, addQuote, isInitialized, promotions, quotes, allUnits, allBookings } = usePMS();
   const { calculatePricingBreakdown } = usePricing();
+
+  const effectivePropertyId = propertyId;
 
   const property = properties.find(p => p.id === propertyId);
   const preset = themePresets[property?.theme_preset || 'cozy'] || themePresets.cozy;
+
+  const propertyRatePlans = useMemo(() => {
+    const plans = allRatePlans.filter(rp => rp.property_id === effectivePropertyId);
+    if (plans.length > 0) return plans;
+
+    return [
+      {
+        id: 'standard',
+        property_id: effectivePropertyId,
+        name: 'Tarifa Estándar',
+        cancellation_policy: 'Cancelación gratuita hasta 24 horas antes del ingreso.',
+        base_price: 120
+      },
+      {
+        id: 'non_refundable',
+        property_id: effectivePropertyId,
+        name: 'Tarifa No Reembolsable',
+        cancellation_policy: 'No permite cancelación ni reembolsos.',
+        discount_type: 'percent' as const,
+        discount_value: 10
+      }
+    ] as RatePlan[];
+  }, [allRatePlans, effectivePropertyId]);
+
+  const getUnitImage = (unit: any, index: number) => {
+    if (unit.images && unit.images.length > 0 && unit.images[0]) {
+      return unit.images[0];
+    }
+    const roomPhotos = [
+      "https://images.unsplash.com/photo-1611892440504-42a792e24d32?q=80&w=800",
+      "https://images.unsplash.com/photo-1590490360182-c33d57733427?q=80&w=800",
+      "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=800",
+      "https://images.unsplash.com/photo-1631049552057-403bc0f7a402?q=80&w=800"
+    ];
+    return roomPhotos[index % roomPhotos.length];
+  };
 
   const [checkIn, setCheckIn] = useState<string>(searchParams.get('checkIn') || format(new Date(), 'yyyy-MM-dd'));
   const [checkOut, setCheckOut] = useState<string>(searchParams.get('checkOut') || format(addDays(new Date(), 1), 'yyyy-MM-dd'));
@@ -30,13 +69,13 @@ export default function BookingEnginePage() {
     if (!promoCode) return null;
     const cleanCode = promoCode.trim().toUpperCase();
     return promotions.find(p => 
-      p.property_id === propertyId && 
+      p.property_id === effectivePropertyId && 
       p.code.toUpperCase() === cleanCode && 
       p.is_active &&
       new Date().toISOString().split('T')[0] >= p.valid_from &&
       new Date().toISOString().split('T')[0] <= p.valid_until
     ) || null;
-  }, [promoCode, promotions, propertyId]);
+  }, [promoCode, promotions, effectivePropertyId]);
   
   const [hasSearched, setHasSearched] = useState(!!searchParams.get('checkIn')); // Auto-search if params provided
 
@@ -55,26 +94,46 @@ export default function BookingEnginePage() {
     const endOut = parseISO(checkOut);
 
     // Filter unit types that have at least one free physical room for these dates
-    const propUnitTypes = unitTypes.filter(ut => {
-      if (ut.property_id !== propertyId) return false;
+    const propertySpecificTypes = allUnitTypes.filter(ut => ut.property_id === effectivePropertyId);
+    const sourceTypes = propertySpecificTypes.length > 0
+      ? propertySpecificTypes
+      : allUnitTypes.filter(ut => ut.property_id === 'prop_1').map(ut => ({ ...ut, property_id: effectivePropertyId }));
 
+    const propUnitTypes = sourceTypes.filter(ut => {
       // Find all physical rooms of this unit type
-      const categoryRooms = units.filter(u => u.unit_type_id === ut.id);
-      if (categoryRooms.length === 0) return false;
+      const categoryRooms = allUnits.filter(u => u.unit_type_id === ut.id);
+      if (categoryRooms.length === 0) return true; // Show for catalog preview even if no physical rooms exist yet
 
-      // Check if there is at least one room without overlapping bookings
-      const hasFreeRoom = categoryRooms.some(room => {
-        const hasOverlap = bookings.some(b => {
-          if (b.room_id !== room.id) return false;
-          if (b.booking_status === 'cancelled') return false;
-          const bIn = parseISO(b.check_in);
-          const bOut = parseISO(b.check_out);
-          return (startIn < bOut) && (endOut > bIn);
-        });
-        return !hasOverlap;
-      });
+      // 1. Count physical rooms of this category occupied by assigned bookings
+      const assignedOccupiedRooms = new Set(
+        allBookings
+          .filter(b => {
+            if (b.booking_status === 'cancelled') return false;
+            const bIn = parseISO(b.check_in);
+            const bOut = parseISO(b.check_out);
+            const overlaps = (startIn < bOut) && (endOut > bIn);
+            if (!overlaps) return false;
+            
+            if (!b.room_id) return false;
+            const room = allUnits.find(u => u.id === b.room_id);
+            return room?.unit_type_id === ut.id;
+          })
+          .map(b => b.room_id)
+      );
 
-      return hasFreeRoom;
+      // 2. Count floating/unassigned bookings booked in this category
+      const floatingBookingsCount = allBookings.filter(b => {
+        if (b.booking_status === 'cancelled') return false;
+        const bIn = parseISO(b.check_in);
+        const bOut = parseISO(b.check_out);
+        const overlaps = (startIn < bOut) && (endOut > bIn);
+        if (!overlaps) return false;
+        
+        return !b.room_id && b.unit_type_id === ut.id;
+      }).length;
+
+      const totalOccupied = assignedOccupiedRooms.size + floatingBookingsCount;
+      return totalOccupied < categoryRooms.length;
     });
 
     setAvailableUnits(propUnitTypes);
@@ -84,12 +143,12 @@ export default function BookingEnginePage() {
     setShowRatePlansForUnit(null);
   };
 
-  // Auto-search on mount if params exist
+  // Auto-search on mount if params exist once the DB is initialized
   useEffect(() => {
-    if (searchParams.get('checkIn')) {
+    if (isInitialized && searchParams.get('checkIn')) {
       handleSearch();
     }
-  }, []);
+  }, [isInitialized]);
 
   const handleBookOrQuote = async (actionType: 'booking' | 'quote') => {
     const nameParts = guestName.trim().split(/\s+/);
@@ -121,22 +180,8 @@ export default function BookingEnginePage() {
       finalAmount = Math.max(0, pricing.total - discountAmount);
     }
 
-    // Find a free physical room (unit) of the selected category for these dates to reserve in PMS
-    const startIn = parseISO(checkIn);
-    const endOut = parseISO(checkOut);
-    const categoryRooms = units.filter(u => u.unit_type_id === selectedUnit?.id);
-    const assignedRoom = categoryRooms.find(room => {
-      // Must not have overlapping bookings
-      const hasOverlap = bookings.some(b => {
-        if (b.room_id !== room.id) return false;
-        if (b.booking_status === 'cancelled') return false;
-        const bIn = parseISO(b.check_in);
-        const bOut = parseISO(b.check_out);
-        return (startIn < bOut) && (endOut > bIn);
-      });
-      return !hasOverlap;
-    });
-    const assignedRoomId = assignedRoom ? assignedRoom.id : (categoryRooms[0]?.id || undefined);
+    // Reservas ingresan sin asignar habitación física
+    const assignedRoomId = undefined;
 
     // Auto-link quote by email or phone match
     const cleanPhone = guestPhone.replace(/\D/g, '');
@@ -245,6 +290,13 @@ export default function BookingEnginePage() {
               <p className="text-sm text-slate-500">Book your perfect stay</p>
             </div>
           </div>
+          <Link 
+            href="/"
+            className="flex items-center gap-2 px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-slate-700 hover:text-slate-900 transition-all font-semibold text-sm shadow-sm"
+          >
+            <Home className="w-4 h-4 text-slate-500" />
+            HOME
+          </Link>
         </div>
       </header>
 
@@ -334,9 +386,8 @@ export default function BookingEnginePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {availableUnits.map(unit => {
-                // Filter rate plans for this unit or general property rate plans
-                const plans = ratePlans.filter(rp => rp.property_id === propertyId);
+              {availableUnits.map((unit, index) => {
+                const plans = propertyRatePlans;
                 
                 return (
                   <div 
@@ -346,7 +397,7 @@ export default function BookingEnginePage() {
                   >
                     <div className="h-56 bg-slate-200 relative overflow-hidden">
                       <img 
-                        src={unit.images && unit.images.length > 0 ? unit.images[0] : `https://images.unsplash.com/photo-1578683010236-d716f9a3f461?q=80&w=800&auto=format&fit=crop&random=${unit.id}`} 
+                        src={getUnitImage(unit, index)} 
                         alt={unit.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       />
@@ -396,7 +447,7 @@ export default function BookingEnginePage() {
             
             <div className="relative h-48 sm:h-64 shrink-0">
                <img 
-                 src={showRatePlansForUnit.images && showRatePlansForUnit.images.length > 0 ? showRatePlansForUnit.images[0] : `https://images.unsplash.com/photo-1578683010236-d716f9a3f461?q=80&w=800&auto=format&fit=crop&random=${showRatePlansForUnit.id}`} 
+                 src={getUnitImage(showRatePlansForUnit, 0)} 
                  alt={showRatePlansForUnit.name}
                  className="w-full h-full object-cover"
                />
@@ -413,20 +464,20 @@ export default function BookingEnginePage() {
             </div>
 
             <div className="p-6 overflow-y-auto bg-slate-50">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Selecciona tu tarifa</h3>
-              
-              <div className="space-y-4">
-                {ratePlans.filter(rp => rp.property_id === propertyId).map(plan => {
-                  const pricing = calculatePricingBreakdown(showRatePlansForUnit.id, plan.id, checkIn, checkOut, 0);
-                  if (pricing.total === 0) return null;
+               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Selecciona tu tarifa</h3>
+               
+               <div className="space-y-4">
+                 {propertyRatePlans.map(plan => {
+                   const pricing = calculatePricingBreakdown(showRatePlansForUnit.id, plan.id, checkIn, checkOut, 0);
+                   if (pricing.total === 0) return null;
 
-                  return (
-                    <div 
-                      key={plan.id} 
-                      onClick={() => {
-                        setSelectedUnit(showRatePlansForUnit);
-                        setSelectedPlan(plan);
-                        setShowRatePlansForUnit(null);
+                   return (
+                     <div 
+                       key={plan.id} 
+                       onClick={() => {
+                         setSelectedUnit(showRatePlansForUnit);
+                         setSelectedPlan(plan);
+                         setShowRatePlansForUnit(null);
                         setShowCheckout(true);
                       }}
                       className="bg-white border-2 border-transparent hover:border-indigo-500 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer group"

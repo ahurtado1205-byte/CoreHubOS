@@ -3,19 +3,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Hexagon, Target, BookOpen, CalendarRange, Users, CircleDollarSign, BarChart3, Search, Bell, Building2, Settings, LogOut, LayoutTemplate, ListTree, Moon, Grid3X3, FileText, ChevronDown, HelpCircle, Menu, X } from 'lucide-react';
+import { Hexagon, Target, BookOpen, CalendarRange, Users, CircleDollarSign, BarChart3, Search, Bell, Building2, Settings, LogOut, LayoutTemplate, ListTree, Moon, Grid3X3, FileText, ChevronDown, HelpCircle, Menu, X, Sparkles } from 'lucide-react';
 import { usePMS } from '../../context/PMSContext';
 import { Modal } from '../ui/Modal';
 
 export function TopBar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { properties, currentPropertyId, setCurrentPropertyId, searchQuery, setSearchQuery, logout, activities, currentUserProfile } = usePMS();
+  const { properties, currentPropertyId, setCurrentPropertyId, searchQuery, setSearchQuery, logout, activities, currentUserProfile, bookings } = usePMS();
   
   const [isAppsOpen, setIsAppsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
   const [helpTab, setHelpTab] = useState<'CRM' | 'PMS' | 'Embudos' | 'Admin'>('CRM');
   
   const appsRef = useRef<HTMLDivElement>(null);
@@ -88,10 +89,10 @@ export function TopBar() {
       <div className="flex items-center gap-6">
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className="xl:hidden p-2 -ml-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
-          title="Menu"
+          className="lg:hidden p-2 -ml-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+          title="Menú de Módulos"
         >
-          {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          <Menu className="w-6 h-6" />
         </button>
         
         <div className="flex items-center gap-2">
@@ -121,25 +122,6 @@ export function TopBar() {
           )}
         </div>
 
-        <nav className="tour-nav-links hidden xl:flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
-          {primaryLinks.map(link => {
-            const Icon = link.icon;
-            const isActive = pathname === link.href;
-            return (
-              <Link 
-                key={link.href}
-                href={link.href} 
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  isActive 
-                    ? 'text-indigo-700 bg-white shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Icon className="w-4 h-4" /> {link.label}
-              </Link>
-            );
-          })}
-        </nav>
       </div>
       
       <div className="flex items-center gap-3">
@@ -155,45 +137,14 @@ export function TopBar() {
         </div>
         
         {/* App Launcher */}
-        <div className="relative" ref={appsRef}>
+        <div className="relative">
           <button 
-            onClick={() => setIsAppsOpen(!isAppsOpen)}
-            className={`p-2 rounded-full transition-colors flex items-center gap-1 ${isAppsOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`p-2 rounded-full transition-colors flex items-center gap-1 cursor-pointer ${isMobileMenuOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}
             title="Módulos y Herramientas"
           >
             <Grid3X3 className="w-5 h-5" />
           </button>
-
-          {isAppsOpen && (
-            <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2">
-              <div className="p-4 bg-slate-50 border-b border-slate-100">
-                <h3 className="font-black text-slate-800 text-sm">Módulos CoreHub</h3>
-                <p className="text-xs text-slate-500">Herramientas de gestión avanzada</p>
-              </div>
-              <div className="p-2 max-h-[70vh] overflow-y-auto">
-                {appModules.map((module, idx) => (
-                  <div key={idx} className="mb-4 last:mb-0">
-                    <h4 className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">{module.category}</h4>
-                    <div className="grid grid-cols-2 gap-1">
-                      {module.items.map(item => (
-                        <Link 
-                          key={item.href}
-                          href={item.href}
-                          onClick={() => setIsAppsOpen(false)}
-                          className="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-slate-50 transition-colors text-center group"
-                        >
-                          <div className={`w-10 h-10 rounded-full ${item.bg} ${item.color} flex items-center justify-center group-hover:scale-110 transition-transform`}>
-                            <item.icon className="w-5 h-5" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-700">{item.label}</span>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <Link href="/night-audit" className="relative p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors block" title="Auditoría Nocturna">
@@ -216,9 +167,22 @@ export function TopBar() {
             title="Actividad Reciente & Notificaciones"
           >
             <Bell className="w-5 h-5" />
-            {(activities || []).length > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
-            )}
+            {(() => {
+              const unassignedCount = (bookings || []).filter(b => !b.room_id && b.booking_status !== 'cancelled' && b.source === 'Motor de Reservas').length;
+              if (unassignedCount > 0) {
+                return (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-[10px] font-black text-white px-1.5 py-0.5 rounded-full border border-white animate-pulse">
+                    {unassignedCount}
+                  </span>
+                );
+              }
+              if ((activities || []).length > 0) {
+                return (
+                  <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+                );
+              }
+              return null;
+            })()}
           </button>
 
           {isNotificationsOpen && (
@@ -236,6 +200,38 @@ export function TopBar() {
                 </button>
               </div>
               <div className="p-2 divide-y divide-slate-100 max-h-[60vh] overflow-y-auto">
+                {(() => {
+                  const unassignedMotorBookings = (bookings || []).filter(b => !b.room_id && b.booking_status !== 'cancelled' && b.source === 'Motor de Reservas');
+                  if (unassignedMotorBookings.length > 0) {
+                    return (
+                      <div className="pb-2 mb-2">
+                        <div className="px-3 py-1.5 text-[9px] font-bold text-amber-600 uppercase tracking-widest bg-amber-50 rounded-lg mb-2">
+                          Reservas sin Asignar del Motor ({unassignedMotorBookings.length})
+                        </div>
+                        <div className="space-y-1">
+                          {unassignedMotorBookings.map(b => (
+                            <Link
+                              key={b.id}
+                              href="/roomrack"
+                              onClick={() => setIsNotificationsOpen(false)}
+                              className="w-full p-2 text-left rounded-xl hover:bg-slate-50 border border-slate-100 bg-white shadow-sm flex items-center justify-between gap-2 transition-all hover:scale-[1.01] block"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-slate-850 truncate text-[11px]">{b.first_name} {b.last_name}</div>
+                                <div className="text-[9px] text-slate-400">Desde: {b.check_in} al {b.check_out}</div>
+                              </div>
+                              <span className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded uppercase tracking-wider">
+                                Asignar
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
                 {activities && activities.length > 0 ? (
                   [...activities]
                     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -392,49 +388,93 @@ export function TopBar() {
           </div>
         </Modal>
       )}
-      {/* Mobile Drawer Navigation */}
+      {/* Backdrop Overlay for mobile drawer */}
       {isMobileMenuOpen && (
-        <div className="absolute top-full left-0 right-0 bg-white border-b border-slate-200 shadow-lg xl:hidden flex flex-col p-4 gap-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-3 mb-1">Navegación Principal</span>
-          {primaryLinks.map(link => {
+        <div 
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="lg:hidden fixed inset-0 bg-slate-900/40 z-45 animate-in fade-in duration-200"
+        />
+      )}
+
+      {/* Left Collapsible Modules Sidebar */}
+      <aside 
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
+        className={`fixed left-0 top-0 bottom-0 bg-slate-900 border-r border-slate-800 text-slate-100 shadow-2xl flex flex-col z-50 transition-all duration-300 ease-in-out p-4
+          ${isMobileMenuOpen ? 'translate-x-0 w-72' : '-translate-x-full lg:translate-x-0'}
+          ${isSidebarHovered ? 'lg:w-64' : 'lg:w-16'}
+        `}
+      >
+        {/* Header of Sidebar */}
+        <div className="flex items-center justify-between pb-6 border-b border-slate-850 mb-6 shrink-0 h-16 overflow-hidden">
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="bg-indigo-600 p-2 rounded-xl shrink-0 flex items-center justify-center">
+              <Hexagon className="w-5 h-5 text-white" />
+            </div>
+            <div className={`transition-all duration-350 whitespace-nowrap select-none ${isSidebarHovered || isMobileMenuOpen ? 'opacity-100 scale-100' : 'lg:opacity-0 lg:scale-95 pointer-events-none'}`}>
+              <h2 className="font-black text-base text-white tracking-tight">CoreHub OS</h2>
+              <span className="text-[10px] text-slate-400 font-bold tracking-wider uppercase">Módulos</span>
+            </div>
+          </div>
+          {/* Close button - visible only on mobile */}
+          <button 
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:bg-slate-850 hover:text-white transition-colors cursor-pointer"
+            title="Cerrar Menú"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Sidebar Scrollable Body */}
+        <nav className="flex-1 space-y-2 overflow-y-auto pr-1 select-none scrollbar-none">
+          {[
+            { href: '/', icon: Target, label: 'CRM' },
+            { href: '/roomrack', icon: CalendarRange, label: 'ROOMRACK' },
+            { href: '/bookings', icon: BookOpen, label: 'RESERVAS' },
+            { href: '/operations/housekeeping', icon: Sparkles, label: 'HSK' },
+            { href: '/settings', icon: Settings, label: 'CONFIGURACION' }
+          ].map(link => {
             const Icon = link.icon;
-            const isActive = pathname === link.href;
+            const isActive = link.href === '/' 
+              ? pathname === '/' 
+              : pathname.startsWith(link.href);
             return (
               <Link 
                 key={link.href}
                 href={link.href} 
                 onClick={() => setIsMobileMenuOpen(false)}
-                className={`flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-colors ${
+                className={`flex items-center gap-4 px-3 py-3 text-sm font-bold rounded-xl transition-all duration-200 group relative ${
                   isActive 
-                    ? 'text-indigo-700 bg-indigo-50/50' 
-                    : 'text-slate-600 hover:text-slate-800 hover:bg-slate-50'
+                    ? 'text-white bg-indigo-600 shadow-lg shadow-indigo-600/30' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-850'
                 }`}
               >
-                <Icon className="w-5 h-5 text-indigo-600" /> {link.label}
+                <div className="shrink-0 w-6 h-6 flex items-center justify-center">
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-indigo-400 group-hover:text-indigo-350 transition-colors'}`} />
+                </div>
+                <span className={`transition-opacity duration-200 whitespace-nowrap ${isSidebarHovered || isMobileMenuOpen ? 'opacity-100' : 'lg:opacity-0 pointer-events-none'}`}>
+                  {link.label}
+                </span>
+                
+                {/* Tooltip on Hover when collapsed */}
+                {!isSidebarHovered && !isMobileMenuOpen && (
+                  <div className="absolute left-full ml-4 px-2.5 py-1.5 bg-slate-950 border border-slate-800 text-white text-xs font-bold rounded-lg shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none whitespace-nowrap z-55">
+                    {link.label}
+                  </div>
+                )}
               </Link>
             );
           })}
-          
-          <div className="border-t border-slate-100 my-2 pt-3">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-3 mb-2 block">Otros Módulos</span>
-            <div className="grid grid-cols-2 gap-2 p-1">
-              {appModules.flatMap(m => m.items).map(item => (
-                <Link 
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50 border border-slate-100 transition-colors"
-                >
-                  <div className={`w-7 h-7 rounded-full ${item.bg} ${item.color} flex items-center justify-center`}>
-                    <item.icon className="w-4 h-4" />
-                  </div>
-                  <span className="text-xs font-bold text-slate-700">{item.label}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
+        </nav>
+
+        {/* Footer of Sidebar */}
+        <div className="pt-4 border-t border-slate-850 text-center shrink-0 overflow-hidden h-12 flex items-center justify-center">
+          <span className={`text-[10px] font-bold text-slate-500 uppercase tracking-widest block transition-opacity duration-200 ${isSidebarHovered || isMobileMenuOpen ? 'opacity-100' : 'lg:opacity-0 pointer-events-none'}`}>
+            CoreHub OS
+          </span>
         </div>
-      )}
+      </aside>
     </header>
   );
 }

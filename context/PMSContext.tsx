@@ -11,9 +11,10 @@ import { mockLeads, mockContacts, mockOpportunities, mockActivities, mockTasks }
 import { mockProperties } from '../mock/properties';
 import { Role, TeamMember } from '../types/team';
 import { mockRoles, mockTeamMembers } from '../mock/team';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseAvailable } from '../lib/supabase';
 import { BOOKING_COLORS } from '../mock/config';
 import { Promotion } from '../types';
+import { FunnelMapping, LandingConfig, defaultFunnelMapping, defaultLandingConfig } from '../lib/funnelConfig';
 
 interface PMSContextType {
   properties: Property[];
@@ -110,11 +111,23 @@ interface PMSContextType {
   bookingColors: Record<string, { label: string; colorClass: string }>;
   updateBookingColor: (status: string, config: { label: string; colorClass: string }) => void;
   deleteBookingColor: (status: string) => void;
+  saveStatus: string;
+  version: number;
+  allUnits: Unit[];
+  allUnitTypes: UnitType[];
+  allRatePlans: RatePlan[];
+  allBookings: Booking[];
+  funnels: FunnelMapping;
+  landings: Record<string, LandingConfig>;
+  updateFunnels: (funnels: FunnelMapping) => void;
+  updateLandings: (landings: Record<string, LandingConfig>) => void;
 }
 
 const PMSContext = createContext<PMSContextType | undefined>(undefined);
 
 export function PMSProvider({ children }: { children: ReactNode }) {
+  const [saveStatus, setSaveStatus] = useState<string>('idle');
+  const [version, setVersion] = useState<number>(0);
   const [isAuthenticated, setIsAuthenticated] = useState(true); 
   const [currentUserProfile, setCurrentUserProfile] = useState<any | null>({
     id: 'usr_admin',
@@ -127,9 +140,40 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   const [isInitialized, setIsInitialized] = useState(false);
   const isLoggingOut = useRef(false);
   const lastMutationTimeRef = useRef<number>(0);
+  const isFirstMutationRef = useRef<boolean>(true);
 
   const [properties, setProperties] = useState<Property[]>(mockProperties);
-  const [currentPropertyId, setCurrentPropertyId] = useState<string>('11111111-1111-1111-1111-111111111111');
+  const [currentPropertyId, setCurrentPropertyIdInternal] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlPropertyId = params.get('property_id') || params.get('p');
+      if (urlPropertyId) {
+        localStorage.setItem('hotelFlow_currentPropertyId', urlPropertyId);
+        return urlPropertyId;
+      }
+      const saved = localStorage.getItem('hotelFlow_currentPropertyId');
+      if (saved) return saved;
+    }
+    return '11111111-1111-1111-1111-111111111111';
+  });
+
+  const setCurrentPropertyId = (id: string) => {
+    setCurrentPropertyIdInternal(id);
+    if (currentUserProfile?.email && id && id !== 'all' && isSupabaseAvailable) {
+      supabase
+        .from('team_members')
+        .update({ property_id: id })
+        .eq('email', currentUserProfile.email)
+        .then(({ error }) => {
+          if (error) {
+            console.error('Error updating team member property ID in DB:', error);
+          }
+        });
+      if (currentUserProfile.property_id !== id) {
+        setCurrentUserProfile((prev: any) => prev ? { ...prev, property_id: id } : null);
+      }
+    }
+  };
   const [systemDate, setSystemDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   const [quotes, setQuotes] = useState<Quote[]>(mockQuotes);
@@ -159,6 +203,21 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(mockTeamMembers);
   const [roles, setRoles] = useState<Role[]>(mockRoles);
 
+  const [funnels, setFunnels] = useState<FunnelMapping>(defaultFunnelMapping);
+  const [landings, setLandings] = useState<Record<string, LandingConfig>>({
+    'bariloche-parejas': defaultLandingConfig
+  });
+
+  const updateFunnels = (newFunnels: FunnelMapping) => {
+    setFunnels(newFunnels);
+    lastMutationTimeRef.current = Date.now();
+  };
+
+  const updateLandings = (newLandings: Record<string, LandingConfig>) => {
+    setLandings(newLandings);
+    lastMutationTimeRef.current = Date.now();
+  };
+
   const updateBookingColor = (status: string, config: { label: string; colorClass: string }) => {
     setBookingColors(prev => ({ ...prev, [status]: config }));
   };
@@ -175,31 +234,66 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   const getActivePropertyId = () => currentPropertyId === 'all' ? fallbackPropertyId : currentPropertyId;
 
   const login = async (email?: string, password?: string) => {
+    if (!email || !password) {
+      setIsAuthenticated(true);
+      return;
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    
     setIsAuthenticated(true);
-    return;
   };
 
   const logout = async () => {
     isLoggingOut.current = true;
     if (typeof window !== 'undefined') {
       Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('sb-')) {
+        if (key.startsWith('sb-') || key === 'hotelFlow_currentPropertyId') {
           localStorage.removeItem(key);
         }
       });
+      // Clear demo session cookie
+      document.cookie = 'hotelflow_demo_session=; path=/; max-age=0; SameSite=Lax';
     }
+    await supabase.auth.signOut();
     setIsAuthenticated(false);
     setCurrentUserProfile(null);
-    setIsInitialized(false);
+    setCurrentPropertyId('11111111-1111-1111-1111-111111111111');
     setTimeout(() => { isLoggingOut.current = false; }, 1000);
   };
 
+
   useEffect(() => {
-    setIsAuthenticated(true);
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (isLoggingOut.current) return;
-      if (session) {
+      if (session && session.user) {
+        // Set cookie so proxy/middleware knows we are authenticated
+        document.cookie = 'hotelflow_demo_session=true; path=/; max-age=86400; SameSite=Lax';
         setIsAuthenticated(true);
+        try {
+          const { data: member, error } = await supabase
+            .from('team_members')
+            .select('*')
+            .eq('email', session.user.email)
+            .single();
+          
+          if (!error && member) {
+            setCurrentUserProfile(member);
+            if (member.property_id) {
+              setCurrentPropertyId(member.property_id);
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching team member:', err);
+        }
+      } else {
+        // Clear cookie if no session
+        document.cookie = 'hotelflow_demo_session=; path=/; max-age=0; SameSite=Lax';
+        setIsAuthenticated(false);
+        setCurrentUserProfile(null);
       }
     });
 
@@ -209,15 +303,58 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlPropertyId = params.get('property_id') || params.get('p');
+      if (urlPropertyId) {
+        if (urlPropertyId !== currentPropertyId) {
+          setCurrentPropertyId(urlPropertyId);
+        }
+        localStorage.setItem('hotelFlow_currentPropertyId', urlPropertyId);
+      } else {
+        const saved = localStorage.getItem('hotelFlow_currentPropertyId');
+        if (saved && saved !== currentPropertyId) {
+          setCurrentPropertyId(saved);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && currentPropertyId) {
+      localStorage.setItem('hotelFlow_currentPropertyId', currentPropertyId);
+    }
+  }, [currentPropertyId]);
+
+  useEffect(() => {
     let mounted = true;
     async function fetchInitialData() {
       try {
-        const res = await fetch('/api/db');
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        let url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}` : '/api/db';
+        if (typeof window !== 'undefined') {
+          const path = window.location.pathname;
+          if (path.includes('/precheckin/')) {
+            const parts = path.split('/');
+            const preId = parts[parts.length - 1];
+            if (preId) {
+              url += (url.includes('?') ? '&' : '?') + `precheckinId=${encodeURIComponent(preId)}`;
+            }
+          }
+        }
+        const res = await fetch(url, { headers });
         const dbData = await res.json();
 
         if (!mounted) return;
 
         if (dbData && Object.keys(dbData).length > 0) {
+          if (dbData.version !== undefined) setVersion(dbData.version);
           if (dbData.properties) setProperties(dbData.properties);
           if (dbData.quotes) setQuotes(dbData.quotes);
           if (dbData.bookings) setBookings(dbData.bookings);
@@ -246,6 +383,8 @@ export function PMSProvider({ children }: { children: ReactNode }) {
           if (dbData.bookingColors) setBookingColors(dbData.bookingColors);
           if (dbData.currentPropertyId) setCurrentPropertyId(dbData.currentPropertyId);
           if (dbData.systemDate) setSystemDate(dbData.systemDate);
+          setFunnels(dbData.funnels || defaultFunnelMapping);
+          setLandings(dbData.landings || { [defaultLandingConfig.slug]: defaultLandingConfig });
         }
         setIsInitialized(true);
       } catch (e) {
@@ -273,7 +412,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', handleFocus);
       clearInterval(interval);
     };
-  }, []);
+  }, [currentPropertyId]);
 
   const initializeSystem = (mode: 'demo' | 'blank' | 'demo_1' | 'demo_2' | 'demo_3', propertyName?: string) => {
     let nextProperties: Property[] = [];
@@ -377,7 +516,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('hotelFlow_funnels');
       localStorage.removeItem('hotelFlow_landings');
     } else {
-      const newPropertyId = '00000000-0000-0000-0000-000000000001';
+      const newPropertyId = `prop_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       nextProperties = propertyName ? [{ id: newPropertyId, name: propertyName }] : [];
       nextPropertyId = propertyName ? newPropertyId : 'all';
       const defaultRole = { id: 'role_admin', name: 'Administrador (Por defecto)', description: 'Acceso total al sistema', permissions: ['all'] };
@@ -417,7 +556,8 @@ export function PMSProvider({ children }: { children: ReactNode }) {
 
     setIsInitialized(true);
     lastMutationTimeRef.current = Date.now();
-    fetch('/api/db', {
+    const url = nextPropertyId ? `/api/db?property_id=${nextPropertyId}` : '/api/db';
+    fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fullState)
@@ -454,6 +594,54 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
+  const triggerImmediateSave = async (nextQuotes: Quote[], nextBookings: Booking[], nextActivities?: Activity[], nextFunnels?: FunnelMapping, nextLandings?: Record<string, LandingConfig>) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const fullState = {
+        properties, quotes: nextQuotes, bookings: nextBookings, units, unitTypes, ratePlans, rateRules, dailyRates, promotions,
+        leads, contacts, opportunities, activities: nextActivities || activities, tasks, payments, invoices, maintenanceBlocks,
+        housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate,
+        funnels: nextFunnels || funnels, landings: nextLandings || landings,
+        version
+      };
+      const url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}` : '/api/db';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(fullState)
+      });
+      if (res.ok) {
+        const resData = await res.json();
+        if (resData.version !== undefined) {
+          setVersion(resData.version);
+        }
+        lastMutationTimeRef.current = Date.now();
+      }
+    } catch (e) {
+      console.error('Immediate save failed:', e);
+    }
+  };
+
+  const logSystemAction = (type: 'reserva' | 'rate_change' | 'other', description: string, propertyId?: string): Activity[] => {
+    const newAct = {
+      id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      property_id: propertyId || getActivePropertyId() || 'all',
+      type,
+      date: new Date().toISOString(),
+      result: 'completed' as const,
+      description,
+      agent_id: 'AH'
+    };
+    const nextActs = [newAct, ...activities];
+    setActivities(nextActs);
+    return nextActs;
+  };
+
   const addQuote = async (quote: any) => {
     const { id, timeline, extra_beds, ...payload } = quote;
     if (payload.follow_up_date === '') payload.follow_up_date = null;
@@ -463,12 +651,18 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       payload.options[0] = { ...payload.options[0], extra_beds };
     }
     const targetPropertyId = payload.property_id || getActivePropertyId();
-    if (targetPropertyId === '11111111-1111-1111-1111-111111111111') {
-      const newQuote = { ...payload, id: `demo_q_${Date.now()}`, property_id: targetPropertyId, created_at: new Date().toISOString() };
-      setQuotes(prev => [newQuote, ...prev]);
-      return newQuote;
-    }
-    return null;
+    const newQuote = { 
+      ...payload, 
+      id: quote.id || `q_${Date.now()}`, 
+      property_id: targetPropertyId, 
+      created_at: quote.created_at || new Date().toISOString(),
+      updated_at: quote.updated_at || new Date().toISOString()
+    };
+    const nextQuotes = [newQuote, ...quotes];
+    setQuotes(nextQuotes);
+    const nextActs = logSystemAction('other', `Nueva cotización CRM creada para ${newQuote.first_name} ${newQuote.last_name}`, targetPropertyId);
+    await triggerImmediateSave(nextQuotes, bookings, nextActs);
+    return newQuote;
   };
   
   const updateQuote = async (quote: any) => {
@@ -476,10 +670,9 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     if (payload.follow_up_date === '') payload.follow_up_date = null;
     if (payload.expiration_date === '') payload.expiration_date = null;
     const targetPropertyId = getActivePropertyId();
-    if (targetPropertyId === '11111111-1111-1111-1111-111111111111') {
-      const updatedQuote = { ...quote, ...payload, updated_at: new Date().toISOString() };
-      setQuotes(prev => prev.map(q => q.id === quote.id ? updatedQuote : q));
-    }
+    const updatedQuote = { ...quote, ...payload, updated_at: new Date().toISOString() };
+    setQuotes(prev => prev.map(q => q.id === quote.id ? updatedQuote : q));
+    logSystemAction('other', `Cotización CRM de ${quote.first_name} ${quote.last_name} modificada`, targetPropertyId);
   };
 
   const addBooking = async (booking: any) => {
@@ -498,13 +691,25 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       }
     }
     const targetPropertyId = payload.property_id || getActivePropertyId();
-    if (targetPropertyId === '11111111-1111-1111-1111-111111111111') {
-      const newBooking = { ...payload, id: `demo_b_${Date.now()}`, property_id: targetPropertyId, created_at: new Date().toISOString() };
-      setBookings(prev => [newBooking, ...prev]);
-      if (payload.quote_id) setQuotes(prev => prev.map(q => q.id === payload.quote_id ? { ...q, status: 'booked' } : q));
-      return newBooking;
+    const newBooking = { 
+      ...payload, 
+      id: booking.id || `b_${Date.now()}`, 
+      property_id: targetPropertyId, 
+      created_at: booking.created_at || new Date().toISOString(),
+      updated_at: booking.updated_at || new Date().toISOString()
+    };
+    const nextBookings = [newBooking, ...bookings];
+    setBookings(nextBookings);
+    
+    let nextQuotes = quotes;
+    if (payload.quote_id) {
+      nextQuotes = quotes.map(q => q.id === payload.quote_id ? { ...q, status: 'booked' } : q);
+      setQuotes(nextQuotes);
     }
-    return null;
+    
+    const nextActs = logSystemAction('reserva', `Nueva reserva creada para ${newBooking.first_name} ${newBooking.last_name} (${newBooking.confirmation_id || newBooking.id})`, targetPropertyId);
+    await triggerImmediateSave(nextQuotes, nextBookings, nextActs);
+    return newBooking;
   };
   
   const updateBooking = async (booking: any) => {
@@ -523,20 +728,25 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       }
     }
     const targetPropertyId = payload.property_id || getActivePropertyId();
-    if (targetPropertyId === '11111111-1111-1111-1111-111111111111') {
-      const updatedBooking = { ...booking, ...payload, updated_at: new Date().toISOString() };
-      setBookings(prev => prev.map(b => b.id === booking.id ? updatedBooking : b));
-    }
+    const updatedBooking = { ...booking, ...payload, updated_at: new Date().toISOString() };
+    const nextBookings = bookings.map(b => b.id === booking.id ? updatedBooking : b);
+    setBookings(nextBookings);
+    const nextActs = logSystemAction('reserva', `Reserva de ${booking.first_name} ${booking.last_name} editada (Estado: ${booking.booking_status})`, targetPropertyId);
+    // Immediate save to prevent data loss if tab is closed before debounce fires
+    await triggerImmediateSave(quotes, nextBookings, nextActs);
   };
+
 
   const updateProperty = async (property: Property) => {
     lastMutationTimeRef.current = Date.now();
     setProperties(prev => prev.map(p => p.id === property.id ? property : p));
+    logSystemAction('other', `Configuración de Propiedad "${property.name}" modificada`);
   };
 
   const deleteProperty = async (id: string) => {
     setProperties(prev => prev.filter(p => p.id !== id));
     if (currentPropertyId === id) setCurrentPropertyId('all');
+    logSystemAction('other', `Propiedad con ID ${id} eliminada`);
   };
 
   const deleteBooking = async (id: string) => {
@@ -545,11 +755,13 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     const associatedQuoteId = bookingToDelete?.quote_id;
     setBookings(prev => prev.filter(b => b.id !== id));
     if (associatedQuoteId) setQuotes(prev => prev.filter(q => q.id !== associatedQuoteId));
+    logSystemAction('reserva', `Reserva con ID ${id} de ${bookingToDelete?.first_name || 'Huésped'} ${bookingToDelete?.last_name || ''} eliminada`);
   };
 
   const deleteQuote = async (id: string) => {
     lastMutationTimeRef.current = Date.now();
     setQuotes(prev => prev.filter(q => q.id !== id));
+    logSystemAction('other', `Cotización CRM con ID ${id} eliminada`);
   };
 
   const deleteContact = async (id: string) => {
@@ -560,68 +772,100 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     const { id, ...payload } = payment;
     const mockPay = { id: `pay_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
     setPayments(prev => [...prev, mockPay]);
+    logSystemAction('other', `Pago registrado: $${payload.amount} USD via ${payload.method} para la reserva ${payload.booking_id}`);
     return mockPay;
   };
 
   const deletePayment = async (id: string) => {
     setPayments(prev => prev.filter(p => p.id !== id));
+    logSystemAction('other', `Pago con ID ${id} eliminado del sistema`);
   };
 
   const addInvoice = async (invoice: any) => {
     const { id, ...payload } = invoice;
     const mockInv = { id: `inv_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
     setInvoices(prev => [...prev, mockInv]);
+    logSystemAction('other', `Factura creada: ${payload.number || mockInv.id} por $${payload.total || 0} USD`);
     return mockInv;
   };
 
   const updateInvoice = async (invoice: Invoice) => {
     setInvoices(prev => prev.map(i => i.id === invoice.id ? invoice : i));
+    logSystemAction('other', `Factura con ID ${invoice.id} modificada (Estado: ${invoice.status})`);
   };
   
-  const updateUnits = (newUnits: Unit[]) => setUnits(newUnits);
+  const updateUnits = (newUnits: Unit[]) => {
+    setUnits(newUnits);
+    logSystemAction('other', `Inventario de unidades físicas reordenado/actualizado`);
+  };
   
   const addUnit = async (unit: any) => {
     const { id, ...payload } = unit;
     const mockU = { id: `u_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
     setUnits(prev => [...prev, mockU]);
+    logSystemAction('other', `Nueva unidad física creada: Habitación "${payload.name}"`);
     return mockU;
   };
 
   const updateUnit = async (unit: Unit) => {
     setUnits(prev => prev.map(u => u.id === unit.id ? unit : u));
+    logSystemAction('other', `Unidad física "${unit.name}" modificada (Estado: ${unit.status})`);
   };
 
   const deleteUnit = async (id: string) => {
     setUnits(prev => prev.filter(u => u.id !== id));
+    logSystemAction('other', `Unidad física con ID ${id} eliminada`);
   };
 
   const addUnitType = async (type: any) => {
     const mockUt = { id: type.id || `ut_${Date.now()}`, ...type, property_id: type.property_id || getActivePropertyId() };
     setUnitTypes(prev => [...prev, mockUt]);
+    logSystemAction('rate_change', `Nueva categoría de habitación creada: "${mockUt.name}"`);
     return mockUt;
   };
 
   const updateUnitType = async (type: UnitType) => {
     setUnitTypes(prev => prev.map(t => t.id === type.id ? type : t));
+    logSystemAction('rate_change', `Categoría de habitación modificada: "${type.name}"`);
   };
 
   const deleteUnitType = async (id: string) => {
     setUnitTypes(prev => prev.filter(t => t.id !== id));
+    logSystemAction('rate_change', `Categoría de habitación con ID ${id} eliminada`);
   };
 
   const addProperty = async (property: Partial<Property>) => {
     const mockP = { id: `prop_${Date.now()}`, name: property.name || 'Nueva Propiedad', address: property.address || '', phone: property.phone || '', email: property.email || '', website: property.website || '' };
     setProperties(prev => [...prev, mockP]);
+    logSystemAction('other', `Nueva propiedad creada: "${mockP.name}"`);
     return mockP;
   };
 
-  const addTemplate = (template: CommunicationTemplate) => setTemplates(prev => [...prev, { ...template, property_id: template.property_id || getActivePropertyId() }]);
-  const updateTemplate = (template: CommunicationTemplate) => setTemplates(prev => prev.map(t => t.id === template.id ? template : t));
-  const deleteTemplate = (id: string) => setTemplates(prev => prev.filter(t => t.id !== id));
+  const addTemplate = (template: CommunicationTemplate) => {
+    setTemplates(prev => [...prev, { ...template, property_id: template.property_id || getActivePropertyId() }]);
+    logSystemAction('other', `Nueva plantilla de comunicación creada: "${template.name}"`);
+  };
+  const updateTemplate = (template: CommunicationTemplate) => {
+    setTemplates(prev => prev.map(t => t.id === template.id ? template : t));
+    logSystemAction('other', `Plantilla de comunicación "${template.name}" modificada`);
+  };
+  const deleteTemplate = (id: string) => {
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    logSystemAction('other', `Plantilla de comunicación con ID ${id} eliminada`);
+  };
 
-  const addRateRule = (rule: RateRule) => setRateRules(prev => [...prev, rule]);
-  const updateRateRule = (rule: RateRule) => setRateRules(prev => prev.map(r => r.id === rule.id ? rule : r));
-  const deleteRateRule = (id: string) => setRateRules(prev => prev.filter(r => r.id !== id));
+  const addRateRule = (rule: RateRule) => {
+    setRateRules(prev => [...prev, rule]);
+    logSystemAction('rate_change', `Nueva regla tarifaria creada para Categoría con ID ${rule.unit_type_id}`);
+  };
+  const updateRateRule = (rule: RateRule) => {
+    setRateRules(prev => prev.map(r => r.id === rule.id ? rule : r));
+    logSystemAction('rate_change', `Regla tarifaria modificada`);
+  };
+  const deleteRateRule = (id: string) => {
+    setRateRules(prev => prev.filter(r => r.id !== id));
+    logSystemAction('rate_change', `Regla tarifaria con ID ${id} eliminada`);
+  };
   
   const setDailyRate = (rate: DailyRate) => {
     setDailyRates(prev => {
@@ -630,15 +874,34 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       if (idx >= 0) newRates[idx] = rate; else newRates.push(rate);
       return newRates;
     });
+    logSystemAction('rate_change', `Tarifa diaria para Categoría ID ${rate.unit_type_id} en fecha ${rate.date} configurada en $${rate.price} USD`);
   };
 
-  const addRatePlan = (plan: RatePlan) => setRatePlans(prev => [...prev, { ...plan, property_id: plan.property_id || getActivePropertyId() }]);
-  const updateRatePlan = (plan: RatePlan) => setRatePlans(prev => prev.map(p => p.id === plan.id ? plan : p));
-  const deleteRatePlan = (id: string) => setRatePlans(prev => prev.filter(p => p.id !== id));
+  const addRatePlan = (plan: RatePlan) => {
+    setRatePlans(prev => [...prev, { ...plan, property_id: plan.property_id || getActivePropertyId() }]);
+    logSystemAction('rate_change', `Nuevo plan tarifario creado: "${plan.name}"`);
+  };
+  const updateRatePlan = (plan: RatePlan) => {
+    setRatePlans(prev => prev.map(p => p.id === plan.id ? plan : p));
+    logSystemAction('rate_change', `Plan tarifario modificado: "${plan.name}"`);
+  };
+  const deleteRatePlan = (id: string) => {
+    setRatePlans(prev => prev.filter(p => p.id !== id));
+    logSystemAction('rate_change', `Plan tarifario con ID ${id} eliminado`);
+  };
 
-  const addPromotion = (promo: Promotion) => setPromotions(prev => [...prev, { ...promo, property_id: promo.property_id || getActivePropertyId() }]);
-  const updatePromotion = (promo: Promotion) => setPromotions(prev => prev.map(p => p.id === promo.id ? promo : p));
-  const deletePromotion = (id: string) => setPromotions(prev => prev.filter(p => p.id !== id));
+  const addPromotion = (promo: Promotion) => {
+    setPromotions(prev => [...prev, { ...promo, property_id: promo.property_id || getActivePropertyId() }]);
+    logSystemAction('rate_change', `Nueva promoción comercial creada: Código "${promo.code}"`);
+  };
+  const updatePromotion = (promo: Promotion) => {
+    setPromotions(prev => prev.map(p => p.id === promo.id ? promo : p));
+    logSystemAction('rate_change', `Promoción comercial Código "${promo.code}" modificada`);
+  };
+  const deletePromotion = (id: string) => {
+    setPromotions(prev => prev.filter(p => p.id !== id));
+    logSystemAction('rate_change', `Promoción comercial con ID ${id} eliminada`);
+  };
 
   const addSource = (source: string) => setBookingSources(prev => prev.includes(source) ? prev : [...prev, source]);
   const deleteSource = (source: string) => setBookingSources(prev => prev.filter(s => s !== source));
@@ -702,29 +965,77 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   const filteredTeamMembers = currentPropertyId === 'all' ? teamMembers : teamMembers.filter(m => !m.property_id || m.property_id === currentPropertyId);
   const filteredTemplates = currentPropertyId === 'all' ? templates : templates.filter(t => !t.property_id || t.property_id === currentPropertyId);
 
+  // Debounce and Auto-Save Effect
   useEffect(() => {
     if (!isInitialized) return;
+    
+    if (isFirstMutationRef.current) {
+      isFirstMutationRef.current = false;
+      setSaveStatus('idle');
+      return;
+    }
+
+    setSaveStatus('dirty');
     lastMutationTimeRef.current = Date.now();
-    const timeout = setTimeout(() => {
-      const fullState = {
-        properties, quotes, bookings, units, unitTypes, ratePlans, rateRules, dailyRates, promotions,
-        leads, contacts, opportunities, activities, tasks, payments, invoices, maintenanceBlocks,
-        housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate
-      };
-      fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullState)
-      })
-      .then(() => { lastMutationTimeRef.current = Date.now(); })
-      .catch(console.error);
+
+    const timeout = setTimeout(async () => {
+      setSaveStatus('saving');
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const fullState = {
+          properties, quotes, bookings, units, unitTypes, ratePlans, rateRules, dailyRates, promotions,
+          leads, contacts, opportunities, activities, tasks, payments, invoices, maintenanceBlocks,
+          housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate,
+          funnels, landings,
+          version
+        };
+
+        const url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}` : '/api/db';
+        const res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(fullState)
+        });
+
+        if (res.status === 409) {
+          setSaveStatus('conflict');
+          const conflictData = await res.json();
+          alert(`⚠️ CONFLICTO DE CONCURRENCIA: La base de datos fue actualizada por otro usuario (Versión en base: ${conflictData.currentVersion}, tu versión: ${conflictData.incomingVersion}). Por favor guarda tus cambios locales o recarga la página.`);
+          return;
+        }
+
+        if (!res.ok) {
+          throw new Error(`Server returned status ${res.status}`);
+        }
+
+        const resData = await res.json();
+        if (resData.version !== undefined) {
+          setVersion(resData.version);
+        }
+        setSaveStatus('saved');
+        lastMutationTimeRef.current = Date.now();
+      } catch (e) {
+        console.error('Failed auto-save:', e);
+        if (typeof window !== 'undefined' && !navigator.onLine) {
+          setSaveStatus('offline');
+        } else {
+          setSaveStatus('error');
+        }
+      }
     }, 1500);
 
     return () => clearTimeout(timeout);
   }, [
     properties, quotes, bookings, units, unitTypes, ratePlans, rateRules, dailyRates, promotions,
     leads, contacts, opportunities, activities, tasks, payments, invoices, maintenanceBlocks,
-    housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate, isInitialized
+    housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate, isInitialized,
+    funnels, landings
   ]);
 
   return (
@@ -733,10 +1044,16 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       quotes: filteredQuotes, bookings: filteredBookings, units: filteredUnits, unitTypes: filteredUnitTypes, templates: filteredTemplates, ratePlans: filteredRatePlans, rateRules: filteredRateRules, dailyRates: filteredDailyRates, promotions: filteredPromotions,
       bookingSources, leads: filteredLeads, contacts: filteredContacts, opportunities: filteredOpportunities, activities: filteredActivities, tasks: filteredTasks, maintenanceBlocks: filteredMaintenanceBlocks, housekeepingTasks,
       addMaintenanceBlock, updateMaintenanceBlock, deleteMaintenanceBlock, updateHousekeepingTask, addQuote, updateQuote, deleteQuote, addBooking, updateBooking, deleteBooking, updateUnits,
+      funnels, landings, updateFunnels, updateLandings,
       addUnit, updateUnit, deleteUnit, addUnitType, updateUnitType, deleteUnitType, addTemplate, updateTemplate, deleteTemplate, addRateRule, updateRateRule, deleteRateRule, setDailyRate,
       addRatePlan, updateRatePlan, deleteRatePlan, addPromotion, updatePromotion, deletePromotion, addSource, deleteSource, addLead, updateLead, addContact, updateContact, deleteContact,
       addOpportunity, updateOpportunity, addActivity, addTask, updateTask, payments, invoices, addPayment, deletePayment, addInvoice, updateInvoice,
-      teamMembers: filteredTeamMembers, roles, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole, currentUserProfile, isAuthenticated, login, logout, isInitialized, initializeSystem, bookingColors, updateBookingColor, deleteBookingColor
+      teamMembers: filteredTeamMembers, roles, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole, currentUserProfile, isAuthenticated, login, logout, isInitialized, initializeSystem, bookingColors, updateBookingColor, deleteBookingColor,
+      saveStatus, version,
+      allUnits: units,
+      allUnitTypes: unitTypes,
+      allRatePlans: ratePlans,
+      allBookings: bookings
     }}>
       {children}
     </PMSContext.Provider>

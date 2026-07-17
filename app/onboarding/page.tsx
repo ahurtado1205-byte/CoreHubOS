@@ -7,7 +7,7 @@ import { usePMS } from '../../context/PMSContext';
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { initializeSystem, addUnitType, addUnit, updateUnitType } = usePMS();
+  const { initializeSystem, addUnitType, addUnit, updateUnitType, currentPropertyId } = usePMS();
   
   const [step, setStep] = useState<'welcome' | 'wizard_property' | 'wizard_category' | 'wizard_unit' | 'done'>('welcome');
   const [loading, setLoading] = useState(false);
@@ -25,7 +25,7 @@ export default function OnboardingPage() {
     setLoading(true);
     setTimeout(() => {
       initializeSystem('demo');
-      router.push('/roomrack');
+      router.push('/');
     }, 1500);
   };
 
@@ -44,7 +44,7 @@ export default function OnboardingPage() {
     e.preventDefault();
     if (!categoryName) return;
     const newCat = await addUnitType({
-      property_id: '00000000-0000-0000-0000-000000000001',
+      property_id: currentPropertyId,
       name: categoryName,
       description: 'Creado desde el asistente inicial.',
       base_price: 0,
@@ -64,7 +64,7 @@ export default function OnboardingPage() {
     e.preventDefault();
     if (!unitName) return;
     await addUnit({
-      property_id: '00000000-0000-0000-0000-000000000001',
+      property_id: currentPropertyId,
       unit_type_id: createdCategoryId,
       name: unitName,
       status: 'active',
@@ -74,7 +74,7 @@ export default function OnboardingPage() {
   };
 
   const finishWizard = () => {
-    router.push('/roomrack');
+    router.push('/');
   };
 
   const inputClass = "w-full p-4 bg-white border-2 border-slate-200 rounded-xl text-slate-900 font-bold text-lg focus:outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10 transition-all";

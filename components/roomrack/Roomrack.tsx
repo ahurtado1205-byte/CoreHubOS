@@ -560,14 +560,16 @@ export function Roomrack({ startDate, daysToView, onEditBooking, onCellDoubleCli
       
       {/* Sidebar Dock (Sin Asignar) */}
       {openUnassignedDate && (
-        <div className="w-80 bg-white border border-slate-200 shadow-xl rounded-xl flex flex-col shrink-0 animate-in slide-in-from-right-8 duration-200">
+        <div className="w-80 bg-white border border-slate-200 shadow-xl rounded-xl flex flex-col shrink-0 animate-in slide-in-from-right-8 duration-200 text-slate-800">
           <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-amber-50 rounded-t-xl">
             <div>
               <h3 className="font-bold text-amber-800 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
                 Sin Asignar
               </h3>
-              <p className="text-xs text-amber-700 mt-0.5">{format(parseISO(openUnassignedDate), 'dd/MM/yyyy')}</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                {openUnassignedDate === 'all' ? 'Todas las reservas flotantes' : format(parseISO(openUnassignedDate), 'dd/MM/yyyy')}
+              </p>
             </div>
             <button 
               onClick={() => setOpenUnassignedDate(null)}
@@ -579,11 +581,15 @@ export function Roomrack({ startDate, daysToView, onEditBooking, onCellDoubleCli
           
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
             {(() => {
-              const date = parseISO(openUnassignedDate);
-              const unassigned = bookings.filter(b => !b.room_id && startOfDay(parseISO(b.check_in)) <= date && startOfDay(parseISO(b.check_out)) > date);
+              const unassigned = openUnassignedDate === 'all'
+                ? bookings.filter(b => !b.room_id && b.booking_status !== 'cancelled')
+                : (() => {
+                    const date = parseISO(openUnassignedDate);
+                    return bookings.filter(b => !b.room_id && startOfDay(parseISO(b.check_in)) <= date && startOfDay(parseISO(b.check_out)) > date);
+                  })();
               
               if (unassigned.length === 0) {
-                return <div className="text-sm text-slate-500 text-center italic mt-4">No hay reservas sin asignar para esta fecha.</div>;
+                return <div className="text-sm text-slate-500 text-center italic mt-4">No hay reservas sin asignar.</div>;
               }
 
               return unassigned.map(booking => {

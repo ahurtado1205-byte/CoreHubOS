@@ -27,18 +27,37 @@ export const buildWhatsAppQuoteMessage = (quote: Quote, lang: QuoteLanguage = 'e
   if (lang === 'es' && quote.source?.startsWith('Quiz Funnel')) {
     const quizData = parseQuizNotes(quote.internal_notes || '');
     if (quizData) {
-      const movie = quizData['Película'] || '';
-      const avoid = quizData['Evitar'] || '';
-      const guide = quizData['Recomendación asignada'] || '';
+      const vipTag = quizData['VIP_TAG'] || 'general';
+      const movie = quizData['Preferencia'] || quizData['Película'] || '';
+      const dates = `del ${quote.check_in} al ${quote.check_out}`;
       
-      let personalizedIntro = tone === 'formal' ? `Estimado/a ${quote.first_name}, hemos recibido sus respuestas del formulario.` : `¡Hola ${quote.first_name}! Recibimos tus respuestas del Quiz ⚡.`;
-      if (movie) personalizedIntro += ` Vimos que en su viaje buscan *${movie}*`;
-      if (avoid) personalizedIntro += ` y que prefieren evitar *${avoid}*.`;
-      else personalizedIntro += `.`;
-      
-      personalizedIntro += tone === 'formal' ? ` Le adjuntamos esta cotización especial, incluyendo nuestra guía: *${guide.replace(/[🥾🍷🌲🧭]/g, '').trim()}*.` : ` Les armamos esta cotización especial pensando en su perfil, e incluimos de regalo nuestra guía: *${guide.replace(/[🥾🍷🌲🧭]/g, '').trim()}*.`;
+      let personalizedIntro = '';
+      if (vipTag === 'parejas') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name}, hemos preparado una propuesta de escapada única para ustedes, ideal para disfrutar de la tranquilidad y la intimidad en pareja.`
+          : `¡Hola ${quote.first_name}! Preparamos una propuesta de escapada única para ustedes, ideal para disfrutar de la tranquilidad en pareja.`;
+        if (movie) personalizedIntro += ` Especialmente pensada para celebrar su viaje de tipo *${movie}* con los detalles que buscan.`;
+        personalizedIntro += ` Para agasajarlos, les sumamos de regalo nuestra *Guía Romántica y Rincones Secretos de la Región 🍷* para planificar veladas mágicas.`;
+      } else if (vipTag === 'familia') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name}, preparamos una propuesta de estadía ideal para viajar con su familia, enfocada en la comodidad y la diversión de todos.`
+          : `¡Hola ${quote.first_name}! Preparamos una propuesta de estadía ideal para viajar con tu familia y crear hermosos recuerdos juntos.`;
+        if (movie) personalizedIntro += ` Está pensada para disfrutar de *${movie}* sin preocupaciones logísticas y con espacios amplios.`;
+        personalizedIntro += ` Para los más chicos, les sumamos de regalo nuestra *Guía de Paseos y Actividades Familiares 🎪*.`;
+      } else if (vipTag === 'amigos') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name}, estructuramos la base perfecta para su viaje grupal, ofreciendo espacios integrados y opciones flexibles.`
+          : `¡Hola ${quote.first_name}! Diseñamos la base perfecta para su escapada con amigos, ideal para compartir grandes momentos.`;
+        if (movie) personalizedIntro += ` Está pensada especialmente para su plan de aventura *${movie}* en la zona.`;
+        personalizedIntro += ` Les incluimos de regalo nuestra *Guía de Aventura, Trekking y Cervecerías Artesanales 🥾* con los mejores circuitos locales.`;
+      } else {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name}, adjuntamos una propuesta a su medida para sus próximas fechas de descanso.`
+          : `¡Hola ${quote.first_name}! Te armamos una propuesta a tu medida pensando en tus preferencias de descanso.`;
+        personalizedIntro += ` Les sumamos de regalo nuestra *Guía de Recomendaciones Gastronómicas y Paseos Locales 🍽️*.`;
+      }
 
-      return `${personalizedIntro}\n\nPara sus fechas del ${quote.check_in} al ${quote.check_out} para ${paxTextEs}, el total es de ${quote.total_amount} ${quote.options?.[0]?.currency || 'USD'}.\n\n¿Qué les parece la propuesta?`;
+      return `${personalizedIntro}\n\nPara sus fechas ${dates} para ${paxTextEs}, el total de su propuesta especial es de ${quote.total_amount} ${quote.options?.[0]?.currency || 'USD'}.\n\n¿Qué les parece el plan? ¿Les reservamos su habitación preferida?`;
     }
   }
 
@@ -73,7 +92,14 @@ export const buildWhatsAppLink = (phone: string, message: string): string => {
 
 export const buildEmailSubject = (quote: Quote, lang: QuoteLanguage = 'es'): string => {
   if (lang === 'es' && quote.source?.startsWith('Quiz Funnel')) {
-    return `Propuesta especial para tu viaje a Bariloche 🏔️ - ${quote.check_in}`;
+    const quizData = parseQuizNotes(quote.internal_notes || '');
+    const vipTag = quizData?.['VIP_TAG'] || 'general';
+    const tagLabels: Record<string, string> = {
+      parejas: 'Propuesta de Escapada Romántica a tu Medida 💖',
+      familia: 'Propuesta de Estadía Familiar Diseñada para Vosotros 👨‍👩‍👧‍👦',
+      amigos: 'Propuesta de Aventura y Amigos Especial 🏔️'
+    };
+    return tagLabels[vipTag] || `Tu propuesta de estadía personalizada ✨`;
   }
   if (lang === 'en') return `Your Stay Quote - ${quote.check_in}`;
   if (lang === 'pt') return `Orçamento da sua estadia - ${quote.check_in}`;
@@ -86,18 +112,37 @@ export const buildEmailBody = (quote: Quote, lang: QuoteLanguage = 'es', tone: Q
   if (lang === 'es' && quote.source?.startsWith('Quiz Funnel')) {
     const quizData = parseQuizNotes(quote.internal_notes || '');
     if (quizData) {
-      const movie = quizData['Película'] || '';
-      const avoid = quizData['Evitar'] || '';
-      const guide = quizData['Recomendación asignada'] || '';
+      const vipTag = quizData['VIP_TAG'] || 'general';
+      const movie = quizData['Preferencia'] || quizData['Película'] || '';
+      const dates = `del ${quote.check_in} al ${quote.check_out}`;
       
-      let personalizedIntro = tone === 'formal' ? `Estimado/a ${quote.first_name},\n\nHemos recibido sus respuestas del formulario.\n` : `Hola ${quote.first_name},\n\nRecibimos tus respuestas del Quiz ⚡.\n`;
-      if (movie) personalizedIntro += `Vimos que en su viaje buscan "${movie}"`;
-      if (avoid) personalizedIntro += ` y que prefieren evitar "${avoid}".\n`;
-      else personalizedIntro += `.\n`;
-      
-      personalizedIntro += tone === 'formal' ? `\nLe adjuntamos esta cotización especial, incluyendo nuestra guía: ${guide}.` : `\nLes armamos esta cotización especial pensando en su perfil, e incluimos de regalo nuestra guía: ${guide}.`;
+      let personalizedIntro = '';
+      if (vipTag === 'parejas') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name},\n\nHemos preparado una propuesta de escapada única para ustedes, ideal para disfrutar de la tranquilidad y la intimidad en pareja.\n`
+          : `¡Hola ${quote.first_name}!\n\nPreparamos una propuesta de escapada única para ustedes, ideal para disfrutar de la tranquilidad en pareja.\n`;
+        if (movie) personalizedIntro += `Especialmente pensada para celebrar su viaje de tipo "${movie}" con los detalles que buscan.\n`;
+        personalizedIntro += `Para agasajarlos, les sumamos de regalo nuestra Guía Romántica y Rincones Secretos de la Región 🍷 para planificar veladas mágicas.\n`;
+      } else if (vipTag === 'familia') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name},\n\nPreparamos una propuesta de estadía ideal para viajar con su familia, enfocada en la comodidad y la diversión de todos.\n`
+          : `¡Hola ${quote.first_name}!\n\nPreparamos una propuesta de estadía ideal para viajar con tu familia y crear hermosos recuerdos juntos.\n`;
+        if (movie) personalizedIntro += `Está pensada para disfrutar de "${movie}" sin preocupaciones logísticas y con espacios amplios.\n`;
+        personalizedIntro += `Para los más chicos, les sumamos de regalo nuestra Guía de Paseos y Actividades Familiares 🎪.\n`;
+      } else if (vipTag === 'amigos') {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name},\n\nEstructuramos la base perfecta para su viaje grupal, ofreciendo espacios integrados y opciones flexibles.\n`
+          : `¡Hola ${quote.first_name}!\n\nDiseñamos la base perfecta para su escapada con amigos, ideal para compartir grandes momentos.\n`;
+        if (movie) personalizedIntro += `Está pensada especialmente para su plan de aventura "${movie}" en la zona.\n`;
+        personalizedIntro += `Les incluimos de regalo nuestra Guía de Aventura, Trekking y Cervecerías Artesanales 🥾 con los mejores circuitos locales.\n`;
+      } else {
+        personalizedIntro = tone === 'formal'
+          ? `Estimado/a ${quote.first_name},\n\nAdjuntamos una propuesta a su medida para sus próximas fechas de descanso.\n`
+          : `¡Hola ${quote.first_name}!\n\nTe armamos una propuesta a tu medida pensando en tus preferencias de descanso.\n`;
+        personalizedIntro += `Les sumamos de regalo nuestra Guía de Recomendaciones Gastronómicas y Paseos Locales 🍽️.\n`;
+      }
 
-      return `${personalizedIntro}\n\nFechas: ${quote.check_in} al ${quote.check_out}\nHuéspedes: ${paxText}\nTotal: ${quote.total_amount} ${quote.options?.[0]?.currency || 'USD'}\n\nQuedamos a tu disposición por cualquier consulta.\n\nSaludos!`;
+      return `${personalizedIntro}\nDetalles de su Propuesta Personalizada:\nFechas: ${dates}\nHuéspedes: ${paxText}\nTarifa Especial: ${quote.total_amount} ${quote.options?.[0]?.currency || 'USD'}\n\nQuedamos a su entera disposición para cualquier consulta o para confirmar su habitación preferida.\n\nAtentamente,\nConcierge de Hospitalidad`;
     }
   }
 

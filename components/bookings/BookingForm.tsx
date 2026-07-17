@@ -6,7 +6,9 @@ import { Booking, BookingStatus, Quote, Companion } from '../../types';
 
 import { format, addDays, parseISO, startOfDay, differenceInDays } from 'date-fns';
 import { usePricing } from '../../hooks/usePricing';
-import { Globe, Megaphone, FileText, QrCode, Check, Users, CalendarRange } from 'lucide-react';
+import { Globe, Megaphone, FileText, QrCode, Check, Users, CalendarRange, MessageCircle, Mail, Download } from 'lucide-react';
+import { Modal } from '../ui/Modal';
+import { buildWhatsAppLink, buildMailtoLink } from '../../services/communicationTemplateService';
 
 interface BookingFormProps {
   initialBooking?: Booking | null;
@@ -82,6 +84,7 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
     discount_value: initialBooking?.discount_value || 0,
     pax: initialBooking?.pax || initialQuote?.pax || 1,
     extra_beds: initialBooking?.extra_beds || initialQuote?.extra_beds || 0,
+    rooms_count: initialBooking?.rooms_count || initialQuote?.rooms_count || 1,
     document_id: initialBooking?.document_id || '',
     dob: initialBooking?.dob || '',
     pre_checkin_completed: initialBooking?.pre_checkin_completed || false,
@@ -92,16 +95,9 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
   const [showCancellation, setShowCancellation] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: 0, method: 'credit_card', reference: '' });
-
-  // Automatically update unit_type_id if room_id is selected
-  useEffect(() => {
-    if (formData.room_id) {
-      const room = units.find(u => u.id === formData.room_id);
-      if (room && room.unit_type_id !== formData.unit_type_id) {
-        setFormData(prev => ({ ...prev, unit_type_id: room.unit_type_id }));
-      }
-    }
-  }, [formData.room_id, units, formData.unit_type_id]);
+  const [isCommunicationOpen, setIsCommunicationOpen] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [copiedPreCheckin, setCopiedPreCheckin] = useState(false);
 
   // Calculate Nights
   const totalNights = useMemo(() => {
@@ -115,7 +111,7 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
   // Pricing Engine
   const pricing = useMemo(() => {
     const breakdown = calculatePricingBreakdown(formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds);
-    const subtotal = breakdown.total;
+    const subtotal = breakdown.total * formData.rooms_count;
     
     let discount = 0;
     if (formData.discount_type === 'percent') {
@@ -127,7 +123,14 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
     const total_amount = Math.max(0, subtotal - discount);
 
     return { ...breakdown, subtotal, discount, total_amount };
-  }, [formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds, formData.discount_type, formData.discount_value, calculatePricingBreakdown]);
+  }, [formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds, formData.discount_type, formData.discount_value, formData.rooms_count, calculatePricingBreakdown]);
+
+  const pendingBalance = useMemo(() => {
+    if (!initialBooking) return 0;
+    const bookingPayments = payments.filter(p => p.booking_id === initialBooking.id && p.status === 'completed');
+    const paidAmount = bookingPayments.reduce((acc, p) => acc + p.amount, 0);
+    return Math.max(0, pricing.total_amount - paidAmount);
+  }, [initialBooking, payments, pricing.total_amount]);
 
   const getRoomName = () => {
     if (!formData.room_id) return '';
@@ -167,7 +170,8 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
     text = text.replace(/{{Estado_Pago}}/g, bookingColors[formData.booking_status]?.label || '');
     text = text.replace(/{{Moneda}}/g, 'USD');
     text = text.replace(/{{Saldo_Pendiente}}/g, formData.booking_status === 'confirmed' ? '0' : pricing.total_amount.toLocaleString());
-    text = text.replace(/{{Link_Pre_CheckIn}}/g, `http://localhost:3000/precheckin/${initialBooking?.id || ''}`);
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    text = text.replace(/{{Link_Pre_CheckIn}}/g, `${origin}/precheckin/${initialBooking?.id || ''}`);
     text = text.replace(/{{Monto_A_Pagar}}/g, pricing.total_amount.toLocaleString());
     text = text.replace(/{{Fecha_Limite_Pago}}/g, formatDate(formData.check_in));
     text = text.replace(/{{Link_Pago}}/g, 'https://pago.hotelflow.com/checkout');
@@ -195,6 +199,9 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
     const checkOut = startOfDay(parseISO(formData.check_out));
 
     return units.filter(unit => {
+      // Siempre incluir la habitación actualmente asignada a esta reserva
+      if (initialBooking && unit.id === initialBooking.room_id) return true;
+
       // Must match selected type if chosen
       if (formData.unit_type_id && unit.unit_type_id !== formData.unit_type_id) return false;
 
@@ -212,7 +219,7 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
     });
   }, [formData.check_in, formData.check_out, units, bookings, initialBooking, formData.unit_type_id]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     let assignedPropertyId = initialBooking?.property_id || initialQuote?.property_id;
@@ -223,52 +230,153 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
       }
     }
 
-    const newBooking: Booking = {
-      id: initialBooking ? initialBooking.id : `b_${Date.now()}`,
-      property_id: assignedPropertyId as string,
-      confirmation_id: initialBooking?.confirmation_id || `RES-${format(new Date(), 'yyyyMMdd')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-      quote_id: initialQuote ? initialQuote.id : undefined,
-      unit_type_id: formData.unit_type_id,
-      room_id: formData.room_id,
-      rate_plan_id: formData.rate_plan_id,
-      first_name: formData.first_name,
-      last_name: formData.last_name,
-      email: formData.email,
-      phone: formData.phone,
-      nationality: formData.nationality,
-      document_id: formData.document_id,
-      dob: formData.dob,
-      pre_checkin_completed: formData.pre_checkin_completed,
-      source: formData.source,
-      check_in: formData.check_in,
-      check_out: formData.check_out,
-      booking_status: formData.booking_status,
-      total_nights: totalNights,
-      subtotal: pricing.subtotal,
-      discount_type: formData.discount_type,
-      discount_value: formData.discount_value,
-      total_amount: pricing.total_amount,
-      notes: formData.notes,
-      follow_up_date: formData.follow_up_date,
-      pax: formData.pax,
-      extra_beds: formData.extra_beds,
-      companions: formData.companions,
-      cancellation_reason: formData.cancellation_reason,
-      created_at: initialBooking?.created_at || new Date().toISOString()
-    };
+    const roomsCount = formData.rooms_count || 1;
 
     if (initialBooking) {
-      updateBooking(newBooking);
+      const newBooking: Booking = {
+        ...initialBooking,
+        property_id: assignedPropertyId as string,
+        unit_type_id: formData.unit_type_id,
+        room_id: formData.room_id,
+        rooms_count: roomsCount,
+        rate_plan_id: formData.rate_plan_id,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        email: formData.email,
+        phone: formData.phone,
+        nationality: formData.nationality,
+        document_id: formData.document_id,
+        dob: formData.dob,
+        pre_checkin_completed: formData.pre_checkin_completed,
+        source: formData.source,
+        check_in: formData.check_in,
+        check_out: formData.check_out,
+        booking_status: formData.booking_status,
+        total_nights: totalNights,
+        subtotal: pricing.subtotal,
+        discount_type: formData.discount_type,
+        discount_value: formData.discount_value,
+        total_amount: pricing.total_amount,
+        notes: formData.notes,
+        follow_up_date: formData.follow_up_date,
+        pax: formData.pax,
+        extra_beds: formData.extra_beds,
+        companions: formData.companions,
+        cancellation_reason: formData.cancellation_reason,
+        created_at: initialBooking?.created_at || new Date().toISOString()
+      };
+      await updateBooking(newBooking);
     } else {
-      addBooking(newBooking);
+      if (roomsCount > 1) {
+        const baseConfirmationId = `RES-${format(new Date(), 'yyyyMMdd')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const assignedIds = new Set<string>();
+        if (formData.room_id) {
+          assignedIds.add(formData.room_id);
+        }
+        
+        const availableRooms = availableUnits.filter(u => u.unit_type_id === formData.unit_type_id);
+
+        for (let i = 0; i < roomsCount; i++) {
+          let roomToAssign = '';
+          if (i === 0 && formData.room_id) {
+            roomToAssign = formData.room_id;
+          } else {
+            const nextAvailable = availableRooms.find(r => !assignedIds.has(r.id));
+            if (nextAvailable) {
+              roomToAssign = nextAvailable.id;
+              assignedIds.add(nextAvailable.id);
+            }
+          }
+
+          const groupBooking: Booking = {
+            id: `b_${Date.now()}_${i}`,
+            property_id: assignedPropertyId as string,
+            confirmation_id: `${baseConfirmationId}-${i + 1}`,
+            quote_id: initialQuote ? initialQuote.id : undefined,
+            unit_type_id: formData.unit_type_id,
+            room_id: roomToAssign || undefined,
+            rooms_count: 1,
+            rate_plan_id: formData.rate_plan_id,
+            first_name: `${formData.first_name} (${i + 1}/${roomsCount})`,
+            last_name: formData.last_name,
+            email: formData.email,
+            phone: formData.phone,
+            nationality: formData.nationality,
+            document_id: formData.document_id,
+            dob: formData.dob,
+            pre_checkin_completed: formData.pre_checkin_completed,
+            source: formData.source,
+            check_in: formData.check_in,
+            check_out: formData.check_out,
+            booking_status: formData.booking_status,
+            total_nights: totalNights,
+            subtotal: pricing.subtotal / roomsCount,
+            discount_type: formData.discount_type,
+            discount_value: formData.discount_type === 'percent' ? formData.discount_value : formData.discount_value / roomsCount,
+            total_amount: pricing.total_amount / roomsCount,
+            notes: `${formData.notes ? formData.notes + ' | ' : ''}Reserva de Grupo (${i + 1}/${roomsCount})`,
+            follow_up_date: formData.follow_up_date,
+            pax: formData.pax,
+            extra_beds: formData.extra_beds,
+            companions: formData.companions,
+            cancellation_reason: formData.cancellation_reason,
+            created_at: new Date().toISOString()
+          };
+          await addBooking(groupBooking);
+        }
+      } else {
+        const newBooking: Booking = {
+          id: `b_${Date.now()}`,
+          property_id: assignedPropertyId as string,
+          confirmation_id: `RES-${format(new Date(), 'yyyyMMdd')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          quote_id: initialQuote ? initialQuote.id : undefined,
+          unit_type_id: formData.unit_type_id,
+          room_id: formData.room_id || undefined,
+          rooms_count: 1,
+          rate_plan_id: formData.rate_plan_id,
+          first_name: formData.first_name,
+          last_name: formData.last_name,
+          email: formData.email,
+          phone: formData.phone,
+          nationality: formData.nationality,
+          document_id: formData.document_id,
+          dob: formData.dob,
+          pre_checkin_completed: formData.pre_checkin_completed,
+          source: formData.source,
+          check_in: formData.check_in,
+          check_out: formData.check_out,
+          booking_status: formData.booking_status,
+          total_nights: totalNights,
+          subtotal: pricing.subtotal,
+          discount_type: formData.discount_type,
+          discount_value: formData.discount_value,
+          total_amount: pricing.total_amount,
+          notes: formData.notes,
+          follow_up_date: formData.follow_up_date,
+          pax: formData.pax,
+          extra_beds: formData.extra_beds,
+          companions: formData.companions,
+          cancellation_reason: formData.cancellation_reason,
+          created_at: new Date().toISOString()
+        };
+        await addBooking(newBooking);
+      }
     }
 
-    // If this came from a Quote, mark it as won
     if (initialQuote) {
       updateQuote({ ...initialQuote, status: 'booked' });
     }
 
     onSuccess();
+  };
+
+  const handleCopyPreCheckinLink = () => {
+    if (!initialBooking) return;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    const link = `${origin}/precheckin/${initialBooking.id}`;
+    navigator.clipboard.writeText(link);
+    setCopiedPreCheckin(true);
+    setTimeout(() => setCopiedPreCheckin(false), 2000);
   };
 
   const handlePrintRegistration = () => {
@@ -715,50 +823,72 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
           </div>
         </div>
 
-        {/* Pax + Camas en fila de 2 */}
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        {/* Steppers: Habitaciones + Huéspedes + Camas Extra */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {/* Habitaciones Stepper */}
+          <div className="bg-white/10 border border-white/20 rounded-2xl p-3.5 flex flex-col items-center gap-2">
+            <label className="text-[9px] font-black text-indigo-200 uppercase tracking-widest text-center">Habitaciones</label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={formData.rooms_count <= 1}
+                onClick={() => setFormData({...formData, rooms_count: Math.max(1, formData.rooms_count - 1)})}
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95 disabled:opacity-40"
+              >−</button>
+              <span className="text-2xl font-black text-white w-6 text-center">{formData.rooms_count}</span>
+              <button
+                type="button"
+                onClick={() => setFormData({...formData, rooms_count: formData.rooms_count + 1})}
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95"
+              >+</button>
+            </div>
+            <span className="text-[9px] text-indigo-300 font-medium text-center">
+              {formData.rooms_count === 1 ? '1 habitación' : `${formData.rooms_count} habitaciones`}
+            </span>
+          </div>
+
           {/* Huéspedes Stepper */}
-          <div className="bg-white/10 border border-white/20 rounded-2xl p-4 flex flex-col items-center gap-2">
-            <label className="text-[10px] font-black text-indigo-200 uppercase tracking-widest">Huéspedes</label>
-            <div className="flex items-center gap-3">
+          <div className="bg-white/10 border border-white/20 rounded-2xl p-3.5 flex flex-col items-center gap-2">
+            <label className="text-[9px] font-black text-indigo-200 uppercase tracking-widest text-center">Huéspedes</label>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
                   const newPax = Math.max(1, formData.pax - 1);
                   setFormData({...formData, pax: newPax, companions: formData.companions.slice(0, newPax - 1)});
                 }}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-lg flex items-center justify-center transition-all active:scale-95"
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95"
               >−</button>
-              <span className="text-3xl font-black text-white w-8 text-center">{formData.pax}</span>
+              <span className="text-2xl font-black text-white w-6 text-center">{formData.pax}</span>
               <button
                 type="button"
                 onClick={() => setFormData({...formData, pax: formData.pax + 1})}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-lg flex items-center justify-center transition-all active:scale-95"
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95"
               >+</button>
             </div>
-            <span className="text-[10px] text-indigo-300 font-medium">
+            <span className="text-[9px] text-indigo-300 font-medium text-center">
               {formData.pax === 1 ? '1 persona' : `${formData.pax} personas`}
             </span>
           </div>
 
           {/* Camas Extra Stepper */}
-          <div className="bg-white/10 border border-white/20 rounded-2xl p-4 flex flex-col items-center gap-2">
-            <label className="text-[10px] font-black text-indigo-200 uppercase tracking-widest">Camas Extra</label>
-            <div className="flex items-center gap-3">
+          <div className="bg-white/10 border border-white/20 rounded-2xl p-3.5 flex flex-col items-center gap-2">
+            <label className="text-[9px] font-black text-indigo-200 uppercase tracking-widest text-center">Camas Extra</label>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setFormData({...formData, extra_beds: Math.max(0, formData.extra_beds - 1)})}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-lg flex items-center justify-center transition-all active:scale-95"
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95"
               >−</button>
-              <span className="text-3xl font-black text-white w-8 text-center">{formData.extra_beds}</span>
+              <span className="text-2xl font-black text-white w-6 text-center">{formData.extra_beds}</span>
               <button
                 type="button"
                 onClick={() => setFormData({...formData, extra_beds: formData.extra_beds + 1})}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-lg flex items-center justify-center transition-all active:scale-95"
+                className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 text-white font-black text-sm flex items-center justify-center transition-all active:scale-95"
               >+</button>
             </div>
-            <span className="text-[10px] text-indigo-300 font-medium">
-              {formData.extra_beds === 0 ? 'Sin camas extra' : `${formData.extra_beds} cama${formData.extra_beds > 1 ? 's' : ''} extra`}
+            <span className="text-[9px] text-indigo-300 font-medium text-center">
+              {formData.extra_beds === 0 ? 'Sin extras' : `${formData.extra_beds} cama${formData.extra_beds > 1 ? 's' : ''}`}
             </span>
           </div>
         </div>
@@ -995,16 +1125,61 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
       )}
 
       <div className="pt-4 flex items-center justify-between">
-        <div className="flex gap-3">
-          {initialBooking && initialBooking.pre_checkin_completed ? (
+        <div className="flex gap-3 flex-wrap">
+          {initialBooking && formData.booking_status !== 'checked_in' && formData.booking_status !== 'checked_out' && formData.booking_status !== 'cancelled' && (
+            <button 
+              type="button" 
+              onClick={() => setFormData({ ...formData, booking_status: 'checked_in' })}
+              className="px-4 py-2 text-sm font-black text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-sm transition-all hover:scale-[1.02] active:scale-95 flex items-center gap-2"
+            >
+              📥 Registrar Check-in
+            </button>
+          )}
+
+          {initialBooking && formData.booking_status === 'checked_in' && (
+            <button 
+              type="button" 
+              onClick={() => {
+                if (pendingBalance > 0) {
+                  alert(`❌ Error: No se puede realizar el Check-out porque la reserva tiene un saldo pendiente de $${pendingBalance}. Por favor, cobra el saldo antes de registrar la salida.`);
+                  return;
+                }
+                setFormData({ ...formData, booking_status: 'checked_out' });
+              }}
+              className="px-4 py-2 text-sm font-black text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-all hover:scale-[1.02] active:scale-95 flex items-center gap-2"
+            >
+              📤 Registrar Check-out
+            </button>
+          )}
+
+          {initialBooking && (
+            <button type="button" onClick={handlePrintRegistration} className="px-4 py-2 text-sm font-semibold text-indigo-650 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-2">
+              <FileText className="w-4 h-4" /> Ficha de Registro
+            </button>
+          )}
+
+          {initialBooking && (
+            <button 
+              type="button" 
+              onClick={handleCopyPreCheckinLink} 
+              className="px-4 py-2 text-sm font-semibold text-indigo-750 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors flex items-center gap-2"
+            >
+              {copiedPreCheckin ? <Check className="w-4 h-4 text-emerald-600" /> : <svg className="w-4 h-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M8.684 10.742l4.828-2.414m0 0a3 3 0 10-3.62-3.62l-4.829 2.414m11.662 9l-4.828-2.414m0 0a3 3 0 10-3.62-3.62l-4.829 2.414" /></svg>}
+              {copiedPreCheckin ? '¡Link Copiado!' : 'Copiar Link Registro'}
+            </button>
+          )}
+
+          {initialBooking && initialBooking.pre_checkin_completed && (
             <button type="button" onClick={() => alert('Simulando escaneo de cámara QR...')} className="px-4 py-2 text-sm font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors flex items-center gap-2">
               <QrCode className="w-4 h-4" /> Escanear QR
             </button>
-          ) : initialBooking ? (
-            <button type="button" onClick={handlePrintRegistration} className="px-4 py-2 text-sm font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-2">
-              <FileText className="w-4 h-4" /> Ficha de Registro
+          )}
+
+          {initialBooking && (
+            <button type="button" onClick={() => setIsCommunicationOpen(true)} className="px-4 py-2 text-sm font-semibold text-teal-700 bg-teal-55 hover:bg-teal-100 rounded-lg transition-colors flex items-center gap-2">
+              <MessageCircle className="w-4 h-4" /> Comunicar
             </button>
-          ) : null}
+          )}
           
           {initialBooking && formData.booking_status !== 'cancelled' && !showCancellation && (
             <button type="button" onClick={() => setShowCancellation(true)} className="px-4 py-2 text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors border border-red-100">
@@ -1031,6 +1206,162 @@ export function BookingForm({ initialBooking, initialQuote, initialDate, initial
           </button>
         </div>
       </div>
+
+      {/* Modal de Envío de Mensajes (Plantillas) */}
+      {isCommunicationOpen && initialBooking && (
+        <Modal 
+          isOpen={isCommunicationOpen} 
+          onClose={() => setIsCommunicationOpen(false)}
+          title="Enviar Mensaje / Generar PDF"
+        >
+          <div className="p-2 space-y-6">
+            <p className="text-slate-600 text-sm">
+              Comunicación con <strong>{formData.first_name} {formData.last_name}</strong>. Seleccioná una plantilla.
+            </p>
+
+            <div className="mb-4">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Plantilla a utilizar</label>
+              <select 
+                value={selectedTemplateId || (templates[0]?.id || '')} 
+                onChange={e => setSelectedTemplateId(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 font-medium"
+              >
+                {templates.length > 0 ? (
+                  <optgroup label="Tus Plantillas">
+                    {templates.map((t: any) => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.type})</option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option value="">No hay plantillas creadas. Crea una en Configuración.</option>
+                )}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mt-6 text-slate-800">
+              <button 
+                type="button"
+                onClick={() => {
+                  let msg = '';
+                  const templateIdToUse = selectedTemplateId || templates[0]?.id;
+                  const tpl = templates.find((t: any) => t.id === templateIdToUse);
+                  if (tpl) {
+                    msg = tpl.content
+                      .replace(/{{nombre}}/g, formData.first_name || '')
+                      .replace(/{{apellido}}/g, formData.last_name || '')
+                      .replace(/{{check_in}}/g, formData.check_in || '')
+                      .replace(/{{check_out}}/g, formData.check_out || '')
+                      .replace(/{{total}}/g, (pricing.total_amount || 0).toString());
+                  }
+                  const link = buildWhatsAppLink(formData.phone || '000000000', msg);
+                  window.open(link, '_blank');
+                  setIsCommunicationOpen(false);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/20"
+              >
+                <MessageCircle className="w-8 h-8" />
+                <span>WhatsApp</span>
+              </button>
+              
+              <button 
+                type="button"
+                onClick={() => {
+                  let subject = '';
+                  let body = '';
+                  const templateIdToUse = selectedTemplateId || templates[0]?.id;
+                  const tpl = templates.find((t: any) => t.id === templateIdToUse);
+                  if (tpl) {
+                    subject = tpl.subject || `Confirmación de Reserva - ${formData.first_name}`;
+                    body = tpl.content
+                      .replace(/{{nombre}}/g, formData.first_name || '')
+                      .replace(/{{apellido}}/g, formData.last_name || '')
+                      .replace(/{{check_in}}/g, formData.check_in || '')
+                      .replace(/{{check_out}}/g, formData.check_out || '')
+                      .replace(/{{total}}/g, (pricing.total_amount || 0).toString());
+                  }
+                  const link = buildMailtoLink(formData.email || 'correo@ejemplo.com', subject, body);
+                  window.open(link, '_blank');
+                  setIsCommunicationOpen(false);
+                }}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-900/20"
+              >
+                <Mail className="w-8 h-8" />
+                <span>Email</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => {
+                  let subject = '';
+                  let body = '';
+                  const templateIdToUse = selectedTemplateId || templates[0]?.id;
+                  const tpl = templates.find((t: any) => t.id === templateIdToUse);
+                  if (tpl) {
+                    subject = tpl.subject || `Reserva - ${formData.first_name}`;
+                    body = tpl.content
+                      .replace(/{{nombre}}/g, formData.first_name || '')
+                      .replace(/{{apellido}}/g, formData.last_name || '')
+                      .replace(/{{check_in}}/g, formData.check_in || '')
+                      .replace(/{{check_out}}/g, formData.check_out || '')
+                      .replace(/{{total}}/g, (pricing.total_amount || 0).toString());
+                  }
+                  
+                  const dateStr = new Date().toISOString().split('T')[0];
+                  const pdfTitle = `${initialBooking.confirmation_id || initialBooking.id}_${dateStr}`;
+                  
+                  const printWindow = window.open('', '_blank');
+                  if (printWindow) {
+                    printWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>${pdfTitle}</title>
+                          <style>
+                            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #1f2937; background: #fff; }
+                            .container { max-width: 800px; margin: 0 auto; line-height: 1.6; }
+                            .header { text-align: center; margin-bottom: 40px; border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; }
+                            .logo { color: #4f46e5; font-size: 24px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 8px; }
+                            .content { white-space: pre-wrap; margin-bottom: 40px; }
+                            .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 20px; }
+                            @media print {
+                              body { padding: 0; }
+                              button { display: none; }
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          <div class="container">
+                            <div class="header">
+                              <div class="logo">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+                                CoreHub OS
+                              </div>
+                              <h2 style="margin-top: 16px; color: #374151;">${subject}</h2>
+                            </div>
+                            <div class="content">${body}</div>
+                            <div class="footer">Documento generado automáticamente por CoreHub OS</div>
+                          </div>
+                          <script>
+                            window.onload = function() {
+                              window.print();
+                            }
+                          </script>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                  }
+                  
+                  setIsCommunicationOpen(false);
+                }}
+                className="col-span-2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-slate-900/20"
+              >
+                <Download className="w-5 h-5" />
+                <span>Generar PDF / Imprimir</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </form>
   );
 }

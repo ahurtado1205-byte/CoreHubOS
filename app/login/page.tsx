@@ -28,9 +28,19 @@ export default function LoginPage() {
     setSuccessMsg('');
     try {
       await login(email, password);
-      router.push('/roomrack');
+      // Supabase sets its own cookie automatically — middleware will detect it
+      router.push('/');
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error al iniciar sesión. Por favor, verifica tus credenciales.');
+      const msg = err.message || '';
+      // If it's a network error (Supabase unreachable), fall back to local bypass
+      if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed') || msg.includes('Load failed')) {
+        await login();
+        // Set demo session cookie so middleware allows access
+        document.cookie = 'hotelflow_demo_session=true; path=/; max-age=86400; SameSite=Lax';
+        router.push('/');
+        return;
+      }
+      setErrorMsg(msg || 'Error al iniciar sesión. Verificá tus credenciales o usá el acceso de Invitado.');
       setLoading(false);
     }
   };
@@ -83,7 +93,7 @@ export default function LoginPage() {
       
       // Auto login
       await login(email, password);
-      router.push('/roomrack');
+      router.push('/');
     } catch (err: any) {
       setErrorMsg(err.message || 'Ocurrió un error durante el registro.');
       setLoading(false);
@@ -93,10 +103,12 @@ export default function LoginPage() {
   const handleDemo = (mode: 'demo_1' | 'demo_2' | 'demo_3') => (e: React.MouseEvent) => {
     e.preventDefault();
     setDemoLoading(true);
+    // Set demo session cookie so middleware allows access to protected routes
+    document.cookie = 'hotelflow_demo_session=true; path=/; max-age=86400; SameSite=Lax';
     setTimeout(() => {
       login();
       initializeSystem(mode);
-      router.push('/roomrack');
+      router.push('/');
     }, 1000);
   };
 

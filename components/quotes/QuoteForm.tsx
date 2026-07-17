@@ -9,6 +9,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { usePricing } from '../../hooks/usePricing';
 import { QuoteCRM } from '../crm/QuoteCRM';
+import { getUniqueGuests, findDuplicateInProfiles } from '../../lib/guestService';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -21,9 +22,12 @@ interface QuoteFormProps {
 }
 
 export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps) {
-  const { addQuote, updateQuote, unitTypes, ratePlans, bookingSources, templates, activities, addActivity } = usePMS();
+  const { addQuote, updateQuote, unitTypes, ratePlans, bookingSources, templates, activities, addActivity, bookings, units, quotes } = usePMS();
   const { calculateTotal, getPriceForPlanAndDate, calculatePricingBreakdown } = usePricing();
   
+  const [forceOversell, setForceOversell] = useState(false);
+  const [ignoreDuplicate, setIgnoreDuplicate] = useState(false);
+
   const [formData, setFormData] = useState({
     first_name: initialQuote?.first_name || '',
     last_name: initialQuote?.last_name || '',
@@ -47,6 +51,36 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
     document_id: ''
   });
 
+  React.useEffect(() => {
+    setFormData(prev => {
+      const defaultUnitType = [...unitTypes].sort((a, b) => a.base_price - b.base_price)[0]?.id || '';
+      const defaultRatePlan = ratePlans[0]?.id || '';
+      
+      return {
+        first_name: initialQuote?.first_name || prev.first_name || '',
+        last_name: initialQuote?.last_name || prev.last_name || '',
+        email: initialQuote?.email || prev.email || '',
+        phone: initialQuote?.phone || prev.phone || '',
+        nationality: initialQuote?.nationality || prev.nationality || '',
+        source: initialQuote?.source || prev.source || bookingSources[0] || '',
+        check_in: initialQuote?.check_in || prev.check_in || format(new Date(), 'yyyy-MM-dd'),
+        check_out: initialQuote?.check_out || prev.check_out || format(addDays(new Date(), 2), 'yyyy-MM-dd'),
+        adults: initialQuote?.pax || prev.adults || 2,
+        children: prev.children || 0,
+        extra_beds: initialQuote?.extra_beds || prev.extra_beds || 0,
+        unit_type_id: initialQuote?.unit_type_id || prev.unit_type_id || defaultUnitType,
+        rate_plan_id: initialQuote?.rate_plan_id || prev.rate_plan_id || defaultRatePlan,
+        discount_type: initialQuote?.discount_type || prev.discount_type || 'none',
+        discount_value: initialQuote?.discount_value || prev.discount_value || 0,
+        notes: initialQuote?.notes || prev.notes || '',
+        follow_up_date: initialQuote?.follow_up_date || prev.follow_up_date || format(new Date(), 'yyyy-MM-dd'),
+        status: initialQuote?.status || prev.status || 'draft',
+        rooms_count: initialQuote?.rooms_count || prev.rooms_count || 1,
+        document_id: ''
+      };
+    });
+  }, [initialQuote, unitTypes, ratePlans, bookingSources]);
+
   const totalNights = useMemo(() => {
     if (!formData.check_in || !formData.check_out) return 0;
     const checkIn = startOfDay(parseISO(formData.check_in));
@@ -55,8 +89,40 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
     return nights > 0 ? nights : 0;
   }, [formData.check_in, formData.check_out]);
 
+  const duplicateContact = useMemo(() => {
+    const profiles = getUniqueGuests(bookings, quotes);
+    return findDuplicateInProfiles(profiles, {
+      first_name: formData.first_name,
+      last_name: formData.last_name,
+      email: formData.email,
+      phone: formData.phone,
+      document_id: formData.document_id
+    });
+  }, [formData.first_name, formData.last_name, formData.email, formData.phone, formData.document_id, bookings, quotes]);
+
+  const availableUnits = useMemo(() => {
+    if (!formData.check_in || !formData.check_out) return [];
+    const checkIn = startOfDay(parseISO(formData.check_in));
+    const checkOut = startOfDay(parseISO(formData.check_out));
+
+    return units.filter((unit: any) => {
+      if (formData.unit_type_id && unit.unit_type_id !== formData.unit_type_id) return false;
+
+      const hasOverlap = bookings.some((b: any) => {
+        if (b.room_id !== unit.id) return false;
+        if (b.booking_status === 'cancelled') return false;
+        if (initialQuote && b.quote_id === initialQuote.id) return false;
+
+        const bIn = startOfDay(parseISO(b.check_in));
+        const bOut = startOfDay(parseISO(b.check_out));
+        return (checkIn < bOut) && (checkOut > bIn);
+      });
+      return !hasOverlap;
+    });
+  }, [formData.check_in, formData.check_out, units, bookings, initialQuote, formData.unit_type_id]);
+
   const pricing = useMemo(() => {
-    const breakdown = calculatePricingBreakdown(formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds);
+    const breakdown = calculatePricingBreakdown(formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds, formData.adults, formData.children, []);
     const subtotal = breakdown.total * formData.rooms_count;
     let discount = 0;
     if (formData.discount_type === 'percent') {
@@ -68,7 +134,7 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
     const total_amount = Math.max(0, subtotal - discount);
 
     return { ...breakdown, subtotal, discount, total_amount };
-  }, [formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds, formData.discount_type, formData.discount_value, formData.rooms_count, calculatePricingBreakdown]);
+  }, [formData.unit_type_id, formData.rate_plan_id, formData.check_in, formData.check_out, formData.extra_beds, formData.discount_type, formData.discount_value, formData.rooms_count, formData.adults, formData.children, calculatePricingBreakdown]);
 
   const visibleRatePlans = useMemo(() => {
     return ratePlans.filter(rp => rp.is_visible_in_quotes !== false || rp.id === formData.rate_plan_id);
@@ -77,9 +143,9 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
   const rackPricing = useMemo(() => {
     const defaultPlan = visibleRatePlans.find(p => p.is_default) || visibleRatePlans[0];
     if (!defaultPlan || !formData.unit_type_id) return null;
-    const breakdown = calculatePricingBreakdown(formData.unit_type_id, defaultPlan.id, formData.check_in, formData.check_out, formData.extra_beds);
+    const breakdown = calculatePricingBreakdown(formData.unit_type_id, defaultPlan.id, formData.check_in, formData.check_out, formData.extra_beds, formData.adults, formData.children, []);
     return breakdown.total * formData.rooms_count;
-  }, [formData.unit_type_id, formData.check_in, formData.check_out, formData.extra_beds, formData.rooms_count, calculatePricingBreakdown, ratePlans]);
+  }, [formData.unit_type_id, formData.check_in, formData.check_out, formData.extra_beds, formData.rooms_count, formData.adults, formData.children, calculatePricingBreakdown, ratePlans, visibleRatePlans]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -381,6 +447,73 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
             </div>
           </div>
         </details>
+
+        {duplicateContact && !ignoreDuplicate && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-2 mt-3 animate-in fade-in">
+            <div className="text-xs font-bold text-amber-800">
+              ⚠️ ¡Atención! Se encontró un huésped registrado con el mismo {duplicateContact.field === 'document_id' ? 'DNI' : duplicateContact.field === 'email' ? 'Email' : 'Teléfono'}:
+            </div>
+            <div className="text-xs text-slate-700 bg-white border border-slate-200/60 p-2.5 rounded-lg">
+              <span className="font-bold">{duplicateContact.guest.first_name} {duplicateContact.guest.last_name}</span>
+              {duplicateContact.guest.email && <div className="text-[11px] text-slate-500">📧 {duplicateContact.guest.email}</div>}
+              {duplicateContact.guest.phone && <div className="text-[11px] text-slate-500">📱 {duplicateContact.guest.phone}</div>}
+              {duplicateContact.guest.document_id && <div className="text-[11px] text-slate-500">🪪 DNI: {duplicateContact.guest.document_id}</div>}
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setFormData(prev => ({
+                    ...prev,
+                    first_name: duplicateContact.guest.first_name,
+                    last_name: duplicateContact.guest.last_name,
+                    email: duplicateContact.guest.email || prev.email,
+                    phone: duplicateContact.guest.phone || prev.phone,
+                    nationality: duplicateContact.guest.nationality || prev.nationality,
+                    document_id: duplicateContact.guest.document_id || prev.document_id
+                  }));
+                  addActivity({
+                    id: `act_${Date.now()}`,
+                    property_id: initialQuote?.property_id || 'prop_1',
+                    type: 'proposal',
+                    date: new Date().toISOString(),
+                    result: 'completed',
+                    description: `Reutilizó perfil de huésped existente en cotización para: ${duplicateContact.guest.first_name} ${duplicateContact.guest.last_name}`
+                  } as any);
+                }}
+                className="bg-white hover:bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 shadow-sm transition-colors"
+              >
+                Reutilizar Perfil
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setFormData(prev => ({ ...prev, first_name: '', last_name: '', email: '', phone: '', document_id: '' }));
+                }}
+                className="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors"
+              >
+                Cancelar y Limpiar
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIgnoreDuplicate(true);
+                  addActivity({
+                    id: `act_${Date.now()}`,
+                    property_id: initialQuote?.property_id || 'prop_1',
+                    type: 'proposal',
+                    date: new Date().toISOString(),
+                    result: 'completed',
+                    description: `Duplicado de huésped en cotización autorizado voluntariamente por usuario para: ${formData.first_name} ${formData.last_name}`
+                  } as any);
+                }}
+                className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors"
+              >
+                Ignorar y Continuar
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* BLOQUE 2: FECHAS Y COTIZACIÓN */}
@@ -519,6 +652,23 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
              <input type="number" min="0" value={formData.extra_beds} onChange={e => setFormData({...formData, extra_beds: parseInt(e.target.value) || 0})} className={inputClass} />
           </div>
         </div>
+
+        {availableUnits.length < formData.rooms_count && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-2 mt-4 animate-in fade-in">
+            <span className="text-xs text-amber-805 font-bold flex items-center gap-1">
+              ⚠️ No hay disponibilidad de habitaciones para esta categoría en las fechas seleccionadas.
+            </span>
+            <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-amber-700 font-semibold">
+              <input 
+                type="checkbox" 
+                checked={forceOversell} 
+                onChange={e => setForceOversell(e.target.checked)} 
+                className="rounded text-amber-600 focus:ring-amber-500 border-slate-300 w-4 h-4 cursor-pointer"
+              />
+              Confirmar sobreventa (Overbooking)
+            </label>
+          </div>
+        )}
       </section>
 
       {initialQuote && (
@@ -564,12 +714,26 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
             <span className="font-bold text-white">${pricing.baseTotal * formData.rooms_count}</span>
           </div>
           
+          {pricing.childrenTotal > 0 && (
+            <div className="flex justify-between items-center text-sm mb-3 text-indigo-300">
+              <span className="font-bold">Tarifa Menores</span>
+              <span className="font-bold">${pricing.childrenTotal * formData.rooms_count}</span>
+            </div>
+          )}
+          
           {pricing.extraBedTotal > 0 && (
             <div className="flex justify-between items-center text-sm mb-3 text-emerald-300">
               <span className="font-bold flex items-center gap-1">
                 Camas Adicionales ({formData.extra_beds} x {totalNights} noches a ${pricing.extraBedNightlyAvg}/noche)
               </span>
               <span className="font-bold">${pricing.extraBedTotal * formData.rooms_count}</span>
+            </div>
+          )}
+
+          {pricing.hasChildPricingWarning && (
+            <div className="bg-amber-500/20 border border-amber-500/30 rounded-xl p-3 text-amber-200 text-xs leading-tight mb-4 flex flex-col gap-1">
+              <span className="font-bold text-amber-300">⚠️ Advertencia Administrativa:</span>
+              <span>El plan tarifario seleccionado no cuenta con una tarifa infantil configurada. Los menores no pagarán cargo adicional de forma temporal.</span>
             </div>
           )}
 
@@ -688,7 +852,7 @@ export function QuoteForm({ initialQuote, onSuccess, onCancel }: QuoteFormProps)
         <button type="button" onClick={onCancel} className="px-6 py-3 font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors">
           Cancelar
         </button>
-        <button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl shadow-sm transition-all active:scale-[0.98] flex justify-center items-center gap-2">
+        <button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl shadow-sm transition-all active:scale-[0.98] flex justify-center items-center gap-2 disabled:opacity-50" disabled={availableUnits.length < formData.rooms_count && !forceOversell}>
           Guardar Cotización
         </button>
       </div>

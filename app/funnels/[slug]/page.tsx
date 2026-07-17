@@ -10,7 +10,7 @@ import { useParams } from 'next/navigation';
 export default function DynamicFunnel() {
   const params = useParams();
   const slug = (params?.slug as string) || 'parejas';
-  const { addQuote, properties } = usePMS();
+  const { addQuote, properties, funnels } = usePMS();
   const property = properties?.[0] || { theme_preset: 'cozy' };
   const preset = themePresets[property.theme_preset || 'cozy'] || themePresets.cozy;
   
@@ -23,18 +23,12 @@ export default function DynamicFunnel() {
   const [answers, setAnswers] = useState<Record<string, any>>({});
 
   useEffect(() => {
-    const saved = localStorage.getItem('hotelFlow_funnels');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (parsed[slug]) {
-          const loadedConfig = parsed[slug];
-          if (!loadedConfig.steps) loadedConfig.steps = defaultFunnelConfig.steps;
-          setConfig(loadedConfig);
-        }
-      } catch (e) {}
+    if (funnels && funnels[slug]) {
+      const loadedConfig = funnels[slug];
+      if (!loadedConfig.steps) loadedConfig.steps = defaultFunnelConfig.steps;
+      setConfig(loadedConfig);
     }
-  }, [slug]);
+  }, [slug, funnels]);
 
   const goToNext = () => setCurrentStepIndex(prev => prev + 1);
   const goBack = () => setCurrentStepIndex(prev => Math.max(0, prev - 1));
@@ -59,7 +53,12 @@ export default function DynamicFunnel() {
   };
 
   const handleFinish = async () => {
-    let notes = '[LEAD DE FUNNEL]\n';
+    let vipTag = 'general';
+    if (slug === 'parejas' || answers['Preferencia'] === 'parejas') vipTag = 'parejas';
+    else if (slug === 'familia' || answers['Preferencia'] === 'familia') vipTag = 'familia';
+    else if (slug === 'amigos' || answers['Preferencia'] === 'amigos') vipTag = 'amigos';
+
+    let notes = `[LEAD DE FUNNEL]\nVIP_TAG: ${vipTag}\n`;
     config.steps.forEach(step => {
       const ans = answers[step.id];
       let val = '';
