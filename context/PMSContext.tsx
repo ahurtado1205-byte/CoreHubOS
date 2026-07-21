@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import { Quote, Booking, Room, CommunicationTemplate, Lead, Contact, Opportunity, Activity, Task, Property, Payment, Invoice, HousekeepingTask } from '../types';
+import { v4 as uuidv4 } from 'uuid';
+import { Quote, Booking, Room, CommunicationTemplate, Lead, Contact, Opportunity, Activity, Task, Property, Payment, PaymentStatus, Invoice, HousekeepingTask } from '../types';
 import { Unit, UnitType, RatePlan, RateRule, DailyRate, MaintenanceBlock } from '../types/inventory';
 import { mockQuotes } from '../mock/quotes';
 import { mockBookings } from '../mock/bookings';
@@ -15,6 +16,7 @@ import { supabase, isSupabaseAvailable } from '../lib/supabase';
 import { BOOKING_COLORS } from '../mock/config';
 import { Promotion } from '../types';
 import { FunnelMapping, LandingConfig, defaultFunnelMapping, defaultLandingConfig } from '../lib/funnelConfig';
+import { getUniqueGuests, findDuplicateInProfiles } from '../lib/guestService';
 
 interface PMSContextType {
   properties: Property[];
@@ -59,7 +61,7 @@ interface PMSContextType {
   updateBooking: (booking: Booking) => void;
   deleteBooking: (id: string) => void;
   addPayment: (payment: any) => Promise<any>;
-  deletePayment: (id: string) => Promise<void>;
+  deletePayment: (id: string, reason?: string) => Promise<void>;
   addInvoice: (invoice: any) => Promise<any>;
   updateInvoice: (invoice: Invoice) => Promise<void>;
   updateUnits: (units: Unit[]) => void;
@@ -128,15 +130,9 @@ const PMSContext = createContext<PMSContextType | undefined>(undefined);
 export function PMSProvider({ children }: { children: ReactNode }) {
   const [saveStatus, setSaveStatus] = useState<string>('idle');
   const [version, setVersion] = useState<number>(0);
-  const [isAuthenticated, setIsAuthenticated] = useState(true); 
-  const [currentUserProfile, setCurrentUserProfile] = useState<any | null>({
-    id: 'usr_admin',
-    first_name: 'Agustin',
-    last_name: 'Hurtado',
-    email: 'ahurtado1205@gmail.com',
-    role_id: 'role_admin',
-    status: 'active'
-  });
+  // Start unauthenticated — onAuthStateChange and fetchInitialData will set the real state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState<any | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const isLoggingOut = useRef(false);
   const lastMutationTimeRef = useRef<number>(0);
@@ -349,7 +345,32 @@ export function PMSProvider({ children }: { children: ReactNode }) {
           }
         }
         const res = await fetch(url, { headers });
-        const dbData = await res.json();
+        let dbData = await res.json();
+        
+        if (token) {
+          try {
+            const [
+              { data: props },
+              { data: bks },
+              { data: qts },
+              { data: uts },
+              { data: uns }
+            ] = await Promise.all([
+              supabase.from('properties').select('*'),
+              supabase.from('bookings').select('*'),
+              supabase.from('quotes').select('*'),
+              supabase.from('unit_types').select('*'),
+              supabase.from('units').select('*')
+            ]);
+            if (props && props.length > 0) dbData.properties = props;
+            if (bks && bks.length > 0) dbData.bookings = bks;
+            if (qts && qts.length > 0) dbData.quotes = qts;
+            if (uts && uts.length > 0) dbData.unitTypes = uts;
+            if (uns && uns.length > 0) dbData.units = uns;
+          } catch (err) {
+            console.error('Error fetching from Supabase directly:', err);
+          }
+        }
 
         if (!mounted) return;
 
@@ -516,7 +537,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('hotelFlow_funnels');
       localStorage.removeItem('hotelFlow_landings');
     } else {
-      const newPropertyId = `prop_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const newPropertyId = uuidv4();
       nextProperties = propertyName ? [{ id: newPropertyId, name: propertyName }] : [];
       nextPropertyId = propertyName ? newPropertyId : 'all';
       const defaultRole = { id: 'role_admin', name: 'Administrador (Por defecto)', description: 'Acceso total al sistema', permissions: ['all'] };
@@ -577,7 +598,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
             if (expDate && expDate < now) {
               changed = true;
               const autoTimelineEvent = {
-                id: `evt_${Date.now()}_${Math.random()}`,
+                id: uuidv4(),
                 type: 'whatsapp' as const,
                 date: new Date().toISOString(),
                 agent: 'CoreHub Bot',
@@ -593,6 +614,49 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     }, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  // Extended immediate save that also persists payments and invoices.
+  // Used by financial mutations (addPayment, deletePayment, addInvoice, updateInvoice)
+  // to guarantee persistence even if the user closes the tab before the debounce fires.
+  const triggerImmediateSaveWithPayments = async (
+    nextQuotes: Quote[],
+    nextBookings: Booking[],
+    nextPayments: Payment[],
+    nextInvoices: Invoice[],
+    nextActivities?: Activity[]
+  ) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const fullState = {
+        properties, quotes: nextQuotes, bookings: nextBookings, units, unitTypes, ratePlans, rateRules, dailyRates, promotions,
+        leads, contacts, opportunities, activities: nextActivities || activities, tasks,
+        payments: nextPayments, invoices: nextInvoices,
+        maintenanceBlocks, housekeepingTasks, templates, roles, teamMembers, bookingColors, currentPropertyId, systemDate,
+        funnels, landings,
+        version
+      };
+      const url = currentPropertyId ? `/api/db?property_id=${currentPropertyId}` : '/api/db';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(fullState)
+      });
+      if (res.ok) {
+        const resData = await res.json();
+        if (resData.version !== undefined) {
+          setVersion(resData.version);
+        }
+        lastMutationTimeRef.current = Date.now();
+      }
+    } catch (e) {
+      console.error('[billing] Immediate save failed:', e);
+    }
+  };
 
   const triggerImmediateSave = async (nextQuotes: Quote[], nextBookings: Booking[], nextActivities?: Activity[], nextFunnels?: FunnelMapping, nextLandings?: Record<string, LandingConfig>) => {
     try {
@@ -629,7 +693,7 @@ export function PMSProvider({ children }: { children: ReactNode }) {
 
   const logSystemAction = (type: 'reserva' | 'rate_change' | 'other', description: string, propertyId?: string): Activity[] => {
     const newAct = {
-      id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      id: uuidv4(),
       property_id: propertyId || getActivePropertyId() || 'all',
       type,
       date: new Date().toISOString(),
@@ -651,15 +715,36 @@ export function PMSProvider({ children }: { children: ReactNode }) {
       payload.options[0] = { ...payload.options[0], extra_beds };
     }
     const targetPropertyId = payload.property_id || getActivePropertyId();
+
+    // Guest deduplication: detect if this guest already exists under a different name
+    const existingProfiles = getUniqueGuests(bookings, quotes);
+    const possibleDuplicate = findDuplicateInProfiles(existingProfiles, payload);
+    if (possibleDuplicate) {
+      const confirmDuplicate = window.confirm(
+        `Posible duplicado detectado para '${payload.first_name} ${payload.last_name}'.\n\nCoincide con el huésped existente '${possibleDuplicate.guest.first_name} ${possibleDuplicate.guest.last_name}' mediante el campo: ${possibleDuplicate.field}.\n\n¿Desea continuar creando este nuevo registro de cotización?`
+      );
+      if (!confirmDuplicate) {
+        return null;
+      }
+    }
+
     const newQuote = { 
       ...payload, 
-      id: quote.id || `q_${Date.now()}`, 
+      id: quote.id || uuidv4(), 
       property_id: targetPropertyId, 
       created_at: quote.created_at || new Date().toISOString(),
       updated_at: quote.updated_at || new Date().toISOString()
     };
+    
+    // Optimistic UI
     const nextQuotes = [newQuote, ...quotes];
     setQuotes(nextQuotes);
+
+    // SQL granular upsert
+    supabase.from('quotes').upsert(newQuote).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addQuote):", error);
+    });
+    
     const nextActs = logSystemAction('other', `Nueva cotización CRM creada para ${newQuote.first_name} ${newQuote.last_name}`, targetPropertyId);
     await triggerImmediateSave(nextQuotes, bookings, nextActs);
     return newQuote;
@@ -671,8 +756,17 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     if (payload.expiration_date === '') payload.expiration_date = null;
     const targetPropertyId = getActivePropertyId();
     const updatedQuote = { ...quote, ...payload, updated_at: new Date().toISOString() };
-    setQuotes(prev => prev.map(q => q.id === quote.id ? updatedQuote : q));
+    
+    const nextQuotes = quotes.map(q => q.id === quote.id ? updatedQuote : q);
+    setQuotes(nextQuotes);
+
+    // SQL granular upsert
+    supabase.from('quotes').upsert(updatedQuote).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (updateQuote):", error);
+    });
+
     logSystemAction('other', `Cotización CRM de ${quote.first_name} ${quote.last_name} modificada`, targetPropertyId);
+    await triggerImmediateSave(nextQuotes, bookings);
   };
 
   const addBooking = async (booking: any) => {
@@ -690,16 +784,34 @@ export function PMSProvider({ children }: { children: ReactNode }) {
         return null;
       }
     }
+
+    // Guest deduplication: detect if this guest already exists under a different name
+    const existingProfiles = getUniqueGuests(bookings, quotes);
+    const possibleDuplicate = findDuplicateInProfiles(existingProfiles, payload);
+    if (possibleDuplicate) {
+      const confirmDuplicate = window.confirm(
+        `Posible duplicado detectado para '${payload.first_name} ${payload.last_name}'.\n\nCoincide con el huésped existente '${possibleDuplicate.guest.first_name} ${possibleDuplicate.guest.last_name}' mediante el campo: ${possibleDuplicate.field}.\n\n¿Desea continuar creando esta nueva reserva?`
+      );
+      if (!confirmDuplicate) {
+        return null;
+      }
+    }
+
     const targetPropertyId = payload.property_id || getActivePropertyId();
     const newBooking = { 
       ...payload, 
-      id: booking.id || `b_${Date.now()}`, 
+      id: booking.id || uuidv4(), 
       property_id: targetPropertyId, 
       created_at: booking.created_at || new Date().toISOString(),
       updated_at: booking.updated_at || new Date().toISOString()
     };
     const nextBookings = [newBooking, ...bookings];
     setBookings(nextBookings);
+
+    // SQL granular upsert
+    supabase.from('bookings').upsert(newBooking).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addBooking):", error);
+    });
     
     let nextQuotes = quotes;
     if (payload.quote_id) {
@@ -731,6 +843,12 @@ export function PMSProvider({ children }: { children: ReactNode }) {
     const updatedBooking = { ...booking, ...payload, updated_at: new Date().toISOString() };
     const nextBookings = bookings.map(b => b.id === booking.id ? updatedBooking : b);
     setBookings(nextBookings);
+
+    // SQL granular upsert
+    supabase.from('bookings').upsert(updatedBooking).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (updateBooking):", error);
+    });
+
     const nextActs = logSystemAction('reserva', `Reserva de ${booking.first_name} ${booking.last_name} editada (Estado: ${booking.booking_status})`, targetPropertyId);
     // Immediate save to prevent data loss if tab is closed before debounce fires
     await triggerImmediateSave(quotes, nextBookings, nextActs);
@@ -770,28 +888,89 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   
   const addPayment = async (payment: any) => {
     const { id, ...payload } = payment;
-    const mockPay = { id: `pay_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
-    setPayments(prev => [...prev, mockPay]);
-    logSystemAction('other', `Pago registrado: $${payload.amount} USD via ${payload.method} para la reserva ${payload.booking_id}`);
-    return mockPay;
+    const newPay = { id: uuidv4(), ...payload, property_id: payload.property_id || getActivePropertyId() };
+    const nextPayments = [...payments, newPay];
+    setPayments(nextPayments);
+
+    // SQL granular upsert
+    supabase.from('billing_payments').upsert(newPay).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addPayment):", error);
+    });
+
+    const nextActs = logSystemAction('other', `Pago registrado: $${payload.amount} USD via ${payload.method || 'N/A'} para la reserva ${payload.booking_id || 'N/A'}`);
+    // Immediate save required — financial operations must not be lost on tab close
+    await triggerImmediateSaveWithPayments(quotes, bookings, nextPayments, invoices, nextActs);
+    return newPay;
   };
 
-  const deletePayment = async (id: string) => {
-    setPayments(prev => prev.filter(p => p.id !== id));
-    logSystemAction('other', `Pago con ID ${id} eliminado del sistema`);
+  const deletePayment = async (id: string, reason?: string) => {
+    // LEDGER APPEND-ONLY: No se borra ni muta el pago original.
+    // Se agrega un registro de reversión que anula el monto.
+    if (!reason) {
+      alert("Se requiere un motivo para revertir el pago.");
+      return;
+    }
+
+    const originalPayment = payments.find(p => p.id === id);
+    if (!originalPayment) return;
+
+    // Impedir revertir una reversión
+    if (originalPayment.reversal_of) {
+      alert("No se puede revertir una reversión.");
+      return;
+    }
+
+    // Impedir reversión doble
+    const alreadyReversed = payments.some(p => p.reversal_of === id);
+    if (alreadyReversed) {
+      alert("Este pago ya ha sido revertido.");
+      return;
+    }
+
+    const reversalEntry: Payment = {
+      id: uuidv4(),
+      booking_id: originalPayment.booking_id,
+      property_id: originalPayment.property_id || getActivePropertyId(),
+      amount: -(Math.abs(originalPayment.amount)), // monto negativo exacto
+      currency: originalPayment.currency,
+      method: originalPayment.method,
+      date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      notes: `[REVERSAL] Reversión del pago ${id}. Motivo: ${reason}`,
+      status: 'completed' as PaymentStatus, // Reversión está completada
+      reversal_of: id,
+    };
+
+    const nextPaymentsWithReversal: Payment[] = [...payments, reversalEntry];
+    setPayments(nextPaymentsWithReversal);
+
+    // SQL granular upsert
+    supabase.from('billing_payments').upsert(reversalEntry).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (deletePayment/reversal):", error);
+    });
+
+    const nextActs = logSystemAction('other', `Pago ID ${id} revertido. Reversión creada: ${reversalEntry.id}`);
+    await triggerImmediateSaveWithPayments(quotes, bookings, nextPaymentsWithReversal, invoices, nextActs);
   };
+
 
   const addInvoice = async (invoice: any) => {
     const { id, ...payload } = invoice;
-    const mockInv = { id: `inv_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
-    setInvoices(prev => [...prev, mockInv]);
-    logSystemAction('other', `Factura creada: ${payload.number || mockInv.id} por $${payload.total || 0} USD`);
-    return mockInv;
+    const newInv = { id: uuidv4(), ...payload, property_id: payload.property_id || getActivePropertyId() };
+    const nextInvoices = [...invoices, newInv];
+    setInvoices(nextInvoices);
+    const nextActs = logSystemAction('other', `Factura creada: ${payload.number || newInv.id} por $${payload.total || 0} USD`);
+    // Immediate save — invoice creation must not be lost
+    await triggerImmediateSaveWithPayments(quotes, bookings, payments, nextInvoices, nextActs);
+    return newInv;
   };
 
   const updateInvoice = async (invoice: Invoice) => {
-    setInvoices(prev => prev.map(i => i.id === invoice.id ? invoice : i));
-    logSystemAction('other', `Factura con ID ${invoice.id} modificada (Estado: ${invoice.status})`);
+    const nextInvoices = invoices.map(i => i.id === invoice.id ? invoice : i);
+    setInvoices(nextInvoices);
+    const nextActs = logSystemAction('other', `Factura con ID ${invoice.id} modificada (Estado: ${invoice.status})`);
+    // Immediate save — invoice state changes must not be lost
+    await triggerImmediateSaveWithPayments(quotes, bookings, payments, nextInvoices, nextActs);
   };
   
   const updateUnits = (newUnits: Unit[]) => {
@@ -801,9 +980,15 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   
   const addUnit = async (unit: any) => {
     const { id, ...payload } = unit;
-    const mockU = { id: `u_${Date.now()}`, ...payload, property_id: payload.property_id || getActivePropertyId() };
+    const mockU = { id: uuidv4(), ...payload, property_id: payload.property_id || getActivePropertyId() };
     setUnits(prev => [...prev, mockU]);
     logSystemAction('other', `Nueva unidad física creada: Habitación "${payload.name}"`);
+    
+    // SQL granular upsert
+    supabase.from('units').upsert(mockU).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addUnit):", error);
+    });
+    
     return mockU;
   };
 
@@ -818,9 +1003,15 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   };
 
   const addUnitType = async (type: any) => {
-    const mockUt = { id: type.id || `ut_${Date.now()}`, ...type, property_id: type.property_id || getActivePropertyId() };
+    const mockUt = { id: type.id || uuidv4(), ...type, property_id: type.property_id || getActivePropertyId() };
     setUnitTypes(prev => [...prev, mockUt]);
     logSystemAction('rate_change', `Nueva categoría de habitación creada: "${mockUt.name}"`);
+    
+    // SQL granular upsert
+    supabase.from('unit_types').upsert(mockUt).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addUnitType):", error);
+    });
+    
     return mockUt;
   };
 
@@ -835,9 +1026,15 @@ export function PMSProvider({ children }: { children: ReactNode }) {
   };
 
   const addProperty = async (property: Partial<Property>) => {
-    const mockP = { id: `prop_${Date.now()}`, name: property.name || 'Nueva Propiedad', address: property.address || '', phone: property.phone || '', email: property.email || '', website: property.website || '' };
+    const mockP = { id: uuidv4(), name: property.name || 'Nueva Propiedad', address: property.address || '', phone: property.phone || '', email: property.email || '', website: property.website || '' };
     setProperties(prev => [...prev, mockP]);
     logSystemAction('other', `Nueva propiedad creada: "${mockP.name}"`);
+
+    // SQL granular upsert
+    supabase.from('properties').upsert(mockP).then(({error}) => {
+      if(error) console.error("SQL Upsert Error (addProperty):", error);
+    });
+
     return mockP;
   };
 

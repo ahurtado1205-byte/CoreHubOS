@@ -254,7 +254,8 @@ export interface Room {
 }
 
 export type PaymentMethod = 'cash' | 'credit_card' | 'debit_card' | 'bank_transfer' | 'payment_link' | 'other';
-export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
+// 'reversed' added in Bloque 2: append-only ledger — payments are never deleted, only reversed
+export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded' | 'reversed';
 
 export interface Payment {
   id: string;
@@ -268,6 +269,8 @@ export interface Payment {
   reference?: string;
   notes?: string;
   created_at: string;
+  // Ledger append-only: si este registro es una reversión, apunta al pago original
+  reversal_of?: string;
 }
 
 export type InvoiceStatus = 'draft' | 'issued' | 'paid' | 'cancelled';

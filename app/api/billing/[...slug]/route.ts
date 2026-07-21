@@ -1,13 +1,30 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { BillingService } from '@/services/billingService';
 import { StripeIntegration } from '@/lib/integrations/stripe/client';
 import { MercadoPagoIntegration } from '@/lib/integrations/mercadopago/client';
 import { ArcaFiscalAdapter } from '@/lib/integrations/arca/client';
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const isSupabaseConfigured = !!(supabaseUrl && supabaseServiceKey);
+
+import { verifyServerAuth } from '@/lib/serverAuth';
+
+// ── POST /api/billing/[...slug] ──────────────────────────────────────────────
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ slug: string[] }> }
 ) {
+  // Auth gate — all billing mutations require a valid session
+  const authUser = await verifyServerAuth(request);
+  if (!authUser) {
+    return NextResponse.json(
+      { error: 'Unauthorized: A valid authentication token is required for billing operations' },
+      { status: 401 }
+    );
+  }
+
   try {
     const { slug } = await params;
     const body = await request.json();
@@ -19,7 +36,7 @@ export async function POST(
       return NextResponse.json(folio);
     }
 
-    // 2. POST /api/billing/folios/[id]/lines (Append-only Ledger cargo)
+    // 2. POST /api/billing/folios/[id]/lines (Append-only Ledger charge)
     if (slug.length === 3 && slug[0] === 'folios' && slug[2] === 'lines') {
       const folioId = slug[1];
       const line = await BillingService.addCharge({
@@ -116,18 +133,28 @@ export async function POST(
 
     return NextResponse.json({ error: 'Endpoint not found' }, { status: 404 });
   } catch (error: any) {
-    console.error('API Billing POST Error:', error);
-    if (error.message && error.message.includes('409')) {
+    console.error('[billing] POST Error:', error);
+    if (error.message?.includes('409')) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     return NextResponse.json({ error: error.message || 'Operation failed' }, { status: 400 });
   }
 }
 
+// ── GET /api/billing/[...slug] ───────────────────────────────────────────────
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string[] }> }
 ) {
+  // Auth gate — billing reports require authentication
+  const authUser = await verifyServerAuth(request);
+  if (!authUser) {
+    return NextResponse.json(
+      { error: 'Unauthorized: A valid authentication token is required for billing operations' },
+      { status: 401 }
+    );
+  }
+
   try {
     const { slug } = await params;
     const { searchParams } = new URL(request.url);
@@ -139,9 +166,29 @@ export async function GET(
       return NextResponse.json(report);
     }
 
+    // 2. GET /api/billing/folios/[id]
+    if (slug.length === 2 && slug[0] === 'folios') {
+      const folioId = slug[1];
+      const folio = await BillingService.getFolioDetails(folioId);
+      if (!folio) {
+        return NextResponse.json({ error: 'Folio not found' }, { status: 404 });
+      }
+      return NextResponse.json(folio);
+    }
+
+    // 3. GET /api/billing/invoices?reservationId=...
+    if (slug.length === 1 && slug[0] === 'invoices') {
+      const reservationId = searchParams.get('reservationId');
+      if (!reservationId) {
+        return NextResponse.json({ error: 'reservationId query parameter is required' }, { status: 400 });
+      }
+      const invoices = await BillingService.getInvoicesByReservation(reservationId);
+      return NextResponse.json(invoices);
+    }
+
     return NextResponse.json({ error: 'Endpoint not found' }, { status: 404 });
   } catch (error: any) {
-    console.error('API Billing GET Error:', error);
+    console.error('[billing] GET Error:', error);
     return NextResponse.json({ error: error.message || 'Operation failed' }, { status: 400 });
   }
 }

@@ -40,4 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
+# local development state databases — contain potentially sensitive data, never commit
+local_db.json
+local_billing_db.json
+
+# local upload files (served via /public/uploads in dev)
+/public/uploads/
