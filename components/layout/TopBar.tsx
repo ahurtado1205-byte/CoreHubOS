@@ -137,7 +137,7 @@ export function TopBar() {
         </div>
         
         {/* App Launcher */}
-        <div className="relative">
+        <div className="relative hidden md:block">
           <button 
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className={`p-2 rounded-full transition-colors flex items-center gap-1 cursor-pointer ${isMobileMenuOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'}`}
@@ -147,17 +147,17 @@ export function TopBar() {
           </button>
         </div>
 
-        <Link href="/night-audit" className="relative p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors block" title="Auditoría Nocturna">
+        <Link href="/night-audit" className="relative p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors hidden lg:block" title="Auditoría Nocturna">
           <Moon className="w-5 h-5" />
         </Link>
         <button 
           onClick={() => setIsHelpOpen(true)}
-          className="relative p-2 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors block" 
+          className="relative p-2 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors hidden md:block" 
           title="Manual de Ayuda"
         >
           <HelpCircle className="w-5 h-5 text-indigo-500" />
         </button>
-        <Link href="/settings" className="tour-settings-btn relative p-2 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors block" title="Configuración">
+        <Link href="/settings" className="tour-settings-btn relative p-2 text-slate-400 hover:text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors hidden sm:block" title="Configuración">
           <Settings className="w-5 h-5" />
         </Link>
         <div className="relative" ref={notificationsRef}>

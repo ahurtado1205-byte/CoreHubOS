@@ -49,3 +49,13 @@ body {
 .animate-fade-in {
   animation: fade-in 0.5s ease-out forwards;
 }
+
+@media (min-width: 1024px) {
+  /* Fix overlapping of fixed sidebar on desktop */
+  body main.flex-1 {
+    padding-left: 5rem !important; /* 80px */
+  }
+  body header.print-hidden {
+    padding-left: 4.5rem !important; /* 72px */
+  }
+}
