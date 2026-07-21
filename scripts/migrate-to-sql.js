@@ -165,33 +165,27 @@ async function run() {
   if (data.bookings) {
     console.log(`Migrando ${data.bookings.length} bookings...`);
     for (const b of data.bookings) {
+      const allowedBookingStatuses = ['confirmed', 'pre_booked', 'deposit_paid', 'pending_payment', 'cancelled'];
+      let mappedBookingStatus = b.booking_status || 'confirmed';
+      if (!allowedBookingStatuses.includes(mappedBookingStatus)) {
+        mappedBookingStatus = 'confirmed'; // map 'checked_in', 'checked_out' etc to 'confirmed'
+      }
+
       const { error } = await supabase.from('bookings').upsert({
         id: stringToUuid(b.id),
         property_id: stringToUuid(b.property_id),
-        quote_id: stringToUuid(b.quote_id),
+        unit_type_id: stringToUuid(b.unit_type_id),
+        room_id: stringToUuid(b.room_id),
         first_name: b.first_name || '',
         last_name: b.last_name || '',
         email: b.email || '',
         phone: b.phone || '',
-        document_id: b.document_id || '',
-        nationality: b.nationality || '',
         check_in: b.check_in,
         check_out: b.check_out,
-        pax: b.pax || 2,
-        rooms_count: b.rooms_count || 1,
-        room_id: stringToUuid(b.room_id),
-        unit_type_id: stringToUuid(b.unit_type_id),
-        rate_plan_id: stringToUuid(b.rate_plan_id),
-        total_nights: b.total_nights || 1,
-        subtotal: b.subtotal || 0,
-        discount_type: b.discount_type || 'none',
-        discount_value: b.discount_value || 0,
+        booking_status: mappedBookingStatus,
         total_amount: b.total_amount || 0,
-        booking_status: b.booking_status || 'confirmed',
-        source: b.source || '',
-        cancellation_reason: b.cancellation_reason || '',
-        pre_checkin_completed: b.pre_checkin_completed || false,
-        notes: b.notes || ''
+        notes: b.notes || '',
+        cancellation_reason: b.cancellation_reason || ''
       });
       if (error) console.error("Error booking:", b.id, error.message);
     }
@@ -201,15 +195,22 @@ async function run() {
   if (data.payments) {
     console.log(`Migrando ${data.payments.length} payments...`);
     for (const p of data.payments) {
+      const providerStr = (p.method || 'other').toLowerCase();
+      const mappedProvider = ['cash','bank_transfer','mercadopago','stripe','adyen','pos_manual'].includes(providerStr) ? providerStr : 'other';
+      const mappedMethodType = providerStr === 'cash' ? 'cash' : (providerStr.includes('transfer') ? 'transfer' : 'other');
+      const mappedStatus = p.status === 'completed' ? 'succeeded' : (p.status || 'succeeded');
+
       const { error } = await supabase.from('billing_payments').upsert({
         id: stringToUuid(p.id),
         property_id: stringToUuid(p.property_id),
-        booking_id: stringToUuid(p.booking_id),
+        reservation_id: stringToUuid(p.booking_id),
         amount: p.amount,
-        currency: p.currency,
-        method: p.method,
-        status: p.status,
-        notes: p.notes || ''
+        currency_code: p.currency || 'USD',
+        provider: mappedProvider,
+        method_type: mappedMethodType,
+        status: mappedStatus,
+        idempotency_key: p.id,
+        provider_payload: { original_notes: p.notes || '' }
       });
       // Puede fallar si folio_id es requerido en billing_payments (dependiendo del esquema exacto)
       if (error) console.error("Error payment:", p.id, error.message);
