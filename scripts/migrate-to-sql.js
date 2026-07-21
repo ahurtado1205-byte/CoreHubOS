@@ -34,16 +34,20 @@ async function run() {
   }
 
   console.log("Iniciando ETL de system_state -> Tablas SQL");
-  
-  // 1. Obtener la data (del archivo local_db.json que es espejo de system_state para facilitar)
-  let data;
-  try {
-    const raw = fs.readFileSync('./local_db.json', 'utf8');
-    data = JSON.parse(raw);
-  } catch(e) {
-    console.error("No se pudo leer local_db.json:", e.message);
-    process.exit(1);
+
+  // Leer desde system_state global en vez de local_db.json
+  const { data: stateData, error: stateError } = await supabase
+    .from('system_state')
+    .select('data')
+    .eq('key', 'global')
+    .single();
+
+  if (stateError || !stateData || !stateData.data) {
+    console.error("Error reading system_state from Supabase", stateError);
+    return;
   }
+
+  const data = stateData.data;
 
   // 2. Definimos orden para respetar las Foreign Keys
   // properties -> roles -> team_members -> unit_types -> units -> bookings -> etc.
